@@ -1,0 +1,4138 @@
+1  analytics  admin
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+$at_risk    = $pdo->query("SELECT COUNT(*) as c FROM Attendance_Summary_View WHERE Status='AT RISK'collate utf8mb4_unicode_ci")->fetch()['c'];
+$top_gpa    = $pdo->query("SELECT MAX(GPA) as m FROM Grades WHERE GPA > 0")->fetch()['m'];
+$avg_att    = $pdo->query("SELECT ROUND(AVG(`Attendance %`),0) as a FROM Attendance_Summary_View")->fetch()['a'];
+$total_dept = $pdo->query("SELECT COUNT(*) as c FROM Department")->fetch()['c'];
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance Analytics</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="courses.php">Courses</a></li>
+            <li><a href="reports.php">Reports</a></li>
+            <li><a href="analytics.php">Analytics</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Performance Analytics</h1>
+        <div class="cards">
+            <div class="card-box">
+                <h3>Total At-Risk Students</h3>
+                <p><?php echo $at_risk ?? 0; ?></p>
+            </div>
+            <div class="card-box">
+                <h3>Top GPA</h3>
+                <p><?php echo $top_gpa ?? 0; ?></p>
+            </div>
+            <div class="card-box">
+                <h3>Average Attendance</h3>
+                <p><?php echo $avg_att ?? 0; ?>%</p>
+            </div>
+            <div class="card-box">
+                <h3>Departments</h3>
+                <p><?php echo $total_dept; ?></p>
+            </div>
+        </div>
+        <div class="table-section">
+            <h2>Attendance Trend</h2>
+            <div class="chart-container">
+                <canvas id="attendanceChart"></canvas>
+            </div>
+        </div>
+        <div class="table-section">
+            <h2>GPA Trend</h2>
+            <div class="chart-container">
+                <canvas id="gpachart"></canvas>
+            </div>
+        </div>
+        <div class="table-section">
+            <h2>Department Performance</h2>
+            <div class="chart-container">
+                <canvas id="departmentChart"></canvas>
+            </div>
+        </div>
+        <div class="table-section">
+            <h2>At-Risk Students</h2>
+            <div class="chart-container">
+                <canvas id="riskChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script src="../assets/js/analytics.js"></script>
+</body>
+</html>
+
+
+2 attendence 
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+ 
+// Mark attendance from admin side
+if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['attendance'])){
+    $course_id   = $_POST['Course_ID'];
+    $semester_id = $_POST['Semester_ID'];
+    $date        = $_POST['Attendance_Date'];
+    $faculty_id  = 1; // default faculty
+ 
+    foreach($_POST['attendance'] as $student_id => $status){
+        $check = $pdo->prepare(
+            "SELECT COUNT(*) as c FROM Attendance
+             WHERE Student_ID=? AND Course_ID=? AND Semester_ID=? AND Attendance_Date=?"
+        );
+        $check->execute([$student_id, $course_id, $semester_id, $date]);
+        if($check->fetch()['c'] == 0){
+            $pdo->prepare(
+                "INSERT INTO Attendance
+                 (Student_ID,Course_ID,Semester_ID,Attendance_Date,Attendance_Status,Faculty_ID)
+                 VALUES (?,?,?,?,?,?)"
+            )->execute([$student_id,$course_id,$semester_id,$date,$status,$faculty_id]);
+        }
+    }
+    header("Location: attendance.php?success=1");
+    exit();
+}
+ 
+// Get attendance summary
+$attendance = $pdo->query("SELECT * FROM Attendance_Summary_View")->fetchAll();
+$present_total = 0; $absent_total = 0;
+foreach($attendance as $a){
+    $present_total += $a['Present'];
+    $absent_total  += $a['Absent'];
+}
+ 
+// Get courses and students for marking
+$courses   = $pdo->query("SELECT * FROM Course")->fetchAll();
+$semesters = $pdo->query("SELECT * FROM Semester")->fetchAll();
+$students  = [];
+$sel_course = $_GET['course_id'] ?? null;
+$sel_sem    = $_GET['semester_id'] ?? null;
+ 
+if($sel_course && $sel_sem){
+    $stmt = $pdo->prepare(
+        "SELECT s.* FROM Student s
+         JOIN Enrollment e ON s.Student_ID=e.Student_ID
+         WHERE e.Course_ID=? AND e.Semester_ID=?
+         ORDER BY s.Roll_No"
+    );
+    $stmt->execute([$sel_course, $sel_sem]);
+    $students = $stmt->fetchAll();
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="students.php"><i class="bi bi-people"></i> Students</a></li>
+            <li><a href="faculty.php"><i class="bi bi-person-workspace"></i> Faculty</a></li>
+            <li><a href="departments.php"><i class="bi bi-building"></i> Departments</a></li>
+            <li><a href="courses.php"><i class="bi bi-book"></i> Courses</a></li>
+            <li><a href="attendance.php" class="active"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a></li>
+            <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+            <li><a href="profile.php"><i class="bi bi-person-circle"></i> Profile</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Attendance Management</h1>
+ 
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">✅ Attendance saved successfully!</div>
+        <?php endif; ?>
+ 
+        <!-- Summary Cards -->
+        <div class="cards">
+            <div class="card-box">
+                <h4>Present</h4>
+                <p id="presentCount"><?php echo $present_total; ?></p>
+            </div>
+            <div class="card-box">
+                <h4>Absent</h4>
+                <p id="absentCount"><?php echo $absent_total; ?></p>
+            </div>
+        </div>
+ 
+        <br>
+ 
+        <!-- Course & Semester Filter -->
+        <div class="student-actions">
+            <form method="GET" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+                <select name="course_id" id="courseFilter">
+                    <option value="">Select Course</option>
+                    <?php foreach($courses as $c): ?>
+                    <option value="<?php echo $c['Course_ID']; ?>"
+                        <?php echo $sel_course == $c['Course_ID'] ? 'selected' : ''; ?>>
+                        <?php echo $c['Course_Name']; ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <select name="semester_id">
+                    <option value="">Select Semester</option>
+                    <?php foreach($semesters as $s): ?>
+                    <option value="<?php echo $s['Semester_ID']; ?>"
+                        <?php echo $sel_sem == $s['Semester_ID'] ? 'selected' : ''; ?>>
+                        <?php echo $s['Semester_Name']; ?> <?php echo $s['Semester_Year']; ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit" class="save-btn">Load Students</button>
+            </form>
+        </div>
+ 
+        <!-- Mark Attendance Table -->
+        <?php if(!empty($students)): ?>
+        <div class="table-section">
+            <h2>Mark Attendance</h2>
+            <form method="POST">
+                <input type="hidden" name="Course_ID" value="<?php echo $sel_course; ?>">
+                <input type="hidden" name="Semester_ID" value="<?php echo $sel_sem; ?>">
+                <div style="margin-bottom:15px">
+                    <input type="date" name="Attendance_Date"
+                           id="attendanceDate"
+                           value="<?php echo date('Y-m-d'); ?>"
+                           style="width:200px">
+                    <button type="submit" class="save-btn" onclick="submitAttendance()">
+                        Submit Attendance
+                    </button>
+                </div>
+                <table id="attendanceTable">
+                    <tr>
+                        <th>Student ID</th>
+                        <th>Student Name</th>
+                        <th>Course</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                    </tr>
+                    <?php foreach($students as $s): ?>
+                    <tr>
+                        <td>S00<?php echo $s['Student_ID']; ?></td>
+                        <td><?php echo $s['Student_Name']; ?></td>
+                        <td>
+                            <?php
+                            $cn = $pdo->prepare("SELECT Course_Name FROM Course WHERE Course_ID=?");
+                            $cn->execute([$sel_course]);
+                            echo $cn->fetch()['Course_Name'];
+                            ?>
+                        </td>
+                        <td><?php echo date('Y-m-d'); ?></td>
+                        <td>
+                            <label>
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Present" checked>
+                                Present
+                            </label>
+                            <label>
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Absent">
+                                Absent
+                            </label>
+                            <label>
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Leave">
+                                Leave
+                            </label>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </table>
+                <br>
+                <button type="submit" class="save-btn">Save Attendance</button>
+            </form>
+        </div>
+        <?php endif; ?>
+ 
+        <!-- Attendance Summary -->
+        <div class="table-section">
+            <h2>Attendance Summary</h2>
+            <table>
+                <tr>
+                    <th>Student</th>
+                    <th>Roll No</th>
+                    <th>Course</th>
+                    <th>Total</th>
+                    <th>Present</th>
+                    <th>Absent</th>
+                    <th>Attendance %</th>
+                    <th>Status</th>
+                </tr>
+                <?php foreach($attendance as $a): ?>
+                <tr>
+                    <td><?php echo $a['Student Name']; ?></td>
+                    <td><?php echo $a['Roll No']; ?></td>
+                    <td><?php echo $a['Course']; ?></td>
+                    <td><?php echo $a['Total Classes']; ?></td>
+                    <td><?php echo $a['Present']; ?></td>
+                    <td><?php echo $a['Absent']; ?></td>
+                    <td><?php echo $a['Attendance %']; ?>%</td>
+                    <td>
+                        <?php if($a['Status'] === 'AT RISK'): ?>
+                            <span style="background:#fee2e2;color:#dc2626;padding:4px 10px;border-radius:20px;font-weight:bold;">
+                                ⚠ AT RISK
+                            </span>
+                        <?php else: ?>
+                            <span style="background:#dcfce7;color:#15803d;padding:4px 10px;border-radius:20px;font-weight:bold;">
+                                ✓ OK
+                            </span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+function submitAttendance(){
+    let present = 0, absent = 0;
+    let course = document.getElementById("courseFilter").value;
+    let date   = document.getElementById("attendanceDate").value;
+    if(date == ""){
+        alert("Please select a date.");
+        return;
+    }
+    let rows = document.querySelectorAll("#attendanceTable tr");
+    for(let i=1; i<rows.length; i++){
+        let radios = rows[i].querySelectorAll("input[type='radio']");
+        rows[i].style.backgroundColor = "";
+        radios.forEach(radio => {
+            if(radio.checked){
+                if(radio.value == "Present"){
+                    present++;
+                    rows[i].style.backgroundColor = "#d4edda";
+                } else {
+                    absent++;
+                    rows[i].style.backgroundColor = "#f8d7da";
+                }
+            }
+        });
+    }
+    document.getElementById("presentCount").innerHTML = present;
+    document.getElementById("absentCount").innerHTML  = absent;
+}
+</script>
+</body>
+</html>
+ 
+
+3 course  
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    if($_POST['action'] === 'add'){
+        $pdo->prepare(
+            "INSERT INTO Course
+             (Course_Name, Credit_Hours, Department_ID, Faculty_ID, Semester)
+             VALUES (?,?,?,?,?)"
+        )->execute([
+            $_POST['Course_Name'],
+            $_POST['Credit_Hours'],
+            $_POST['Department_ID'],
+            $_POST['Faculty_ID'],
+            $_POST['Semester']
+        ]);
+        header("Location: courses.php?success=added");
+        exit();
+    }
+    if($_POST['action'] === 'delete'){
+        $pdo->prepare("DELETE FROM Course WHERE Course_ID=?")
+            ->execute([$_POST['Course_ID']]);
+        header("Location: courses.php?success=deleted");
+        exit();
+    }
+}
+
+$courses = $pdo->query(
+    "SELECT c.*, d.Department_Name, f.Faculty_Name
+     FROM Course c
+     JOIN Department d ON c.Department_ID = d.Department_ID
+     JOIN Faculty f    ON c.Faculty_ID    = f.Faculty_ID
+     ORDER BY c.Course_ID DESC"
+)->fetchAll();
+
+$departments = $pdo->query("SELECT * FROM Department")->fetchAll();
+$faculty     = $pdo->query("SELECT * FROM Faculty")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Course Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+#courseTable { width: 100%; border-collapse: collapse; }
+#courseTable thead th { 
+    background: #2563eb; 
+    color: white; 
+    padding: 14px 12px; 
+    text-align: center; 
+    font-weight: 700;
+}
+#courseTable tbody td { 
+    padding: 14px 12px; 
+    border-bottom: 1px solid #e5e7eb; 
+    text-align: center;
+    vertical-align: middle;
+}
+.view-btn { background: none; border: none; color: #334155; font-weight: 500; cursor:pointer; margin-right: 8px; }
+.edit-btn { background: #f59e0b; color: white; padding: 6px 15px; border-radius: 8px; border: none; text-decoration: none; margin: 3px; display:inline-block; }
+.edit-btn:hover { color: white; background: #d97706; }
+.delete-btn { background: #dc2626; color: white; padding: 6px 15px; border-radius: 8px; border: none; margin: 3px; }
+.add-btn { background: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; border: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="departments.php">Departments</a></li>
+            <li><a href="courses.php" class="active">Courses</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Course Management</h1>
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">Course <?php echo $_GET['success']; ?> successfully!</div>
+        <?php endif; ?>
+
+        <!-- Add Course -->
+        <div class="student-actions">
+            <button class="add-btn" onclick="document.getElementById('addForm').style.display='block'">Add Course</button>
+        </div>
+
+        <div id="addForm" style="display:none; background:white; padding:20px; border-radius:10px; margin:15px 0;">
+            <h3>Add New Course</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <div class="row">
+                    <div class="col-md-6"><input type="text" name="Course_Name" placeholder="Course Name" class="form-control mb-2" required></div>
+                    <div class="col-md-6"><input type="number" name="Credit_Hours" placeholder="Credit Hours" class="form-control mb-2" required></div>
+                    <div class="col-md-6">
+                        <select name="Semester" class="form-control mb-2" required>
+                            <option value="">Select Semester</option>
+                            <?php for($i=1; $i<=8; $i++): ?>
+                            <option value="<?php echo $i; ?>">Semester <?php echo $i; ?></option>
+                            <?php endfor; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <select name="Department_ID" class="form-control mb-2" required>
+                            <option value="">Select Department</option>
+                            <?php foreach($departments as $d): ?>
+                            <option value="<?php echo $d['Department_ID']; ?>"><?php echo $d['Department_Name']; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <select name="Faculty_ID" class="form-control mb-2" required>
+                            <option value="">Select Faculty</option>
+                            <?php foreach($faculty as $f): ?>
+                            <option value="<?php echo $f['Faculty_ID']; ?>"><?php echo $f['Faculty_Name']; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="save-btn">Add Course</button>
+                <button type="button" class="delete-btn" onclick="document.getElementById('addForm').style.display='none'">Cancel</button>
+            </form>
+        </div>
+
+        <!-- Courses Table -->
+        <div class="table-section">
+            <h2>Course List</h2>
+            <table id="courseTable">
+                <thead>
+                    <tr>
+                        <th>Course ID</th>
+                        <th>Course Name</th>
+                        <th>Credit Hours</th>
+                        <th>Department</th>
+                        <th>Semester</th>
+                        <th>Assigned Faculty</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach($courses as $c): ?>
+                <tr>
+                    <td>CS<?php echo $c['Course_ID']; ?></td>
+                    <td><?php echo $c['Course_Name']; ?></td>
+                    <td><?php echo $c['Credit_Hours']; ?></td>
+                    <td><?php echo $c['Department_Name']; ?></td>
+                    <td><?php echo $c['Semester']; ?></td>
+                    <td><?php echo $c['Faculty_Name']; ?></td>
+                    <td>
+                        <button class="view-btn" onclick="alert('Course: <?php echo $c['Course_Name']; ?>\nID: CS<?php echo $c['Course_ID']; ?>\nFaculty: <?php echo $c['Faculty_Name']; ?>\nSemester: <?php echo $c['Semester']; ?>')">View</button>
+                        <a href="edit_course.php?id=<?php echo $c['Course_ID']; ?>" class="edit-btn">Edit</a>
+                        <form method="POST" style="display:inline" onsubmit="return confirm('Delete this course?')">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="Course_ID" value="<?php echo $c['Course_ID']; ?>">
+                            <button type="submit" class="delete-btn">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+4 admin dasboard
+
+<?php
+require_once '../includes/session_check.php'; // pehle session check
+require_once '../config/db_connection.php'; // phir db
+checkAdminLogin();
+ 
+$total_students = $pdo->query("SELECT COUNT(*) as c FROM Student")->fetch()['c'];
+// ... baki tumhara code same rahega
+
+$total_faculty  = $pdo->query("SELECT COUNT(*) as c FROM Faculty")->fetch()['c'];
+$total_courses  = $pdo->query("SELECT COUNT(*) as c FROM Course")->fetch()['c'];
+$total_depts    = $pdo->query("SELECT COUNT(*) as c FROM Department")->fetch()['c'];
+$at_risk        = $pdo->query("SELECT COUNT(*) as c FROM Attendance_Summary_View WHERE Status collate utf8mb4_unicode_ci ='AT RISK'")->fetch()['c'];
+$avg_attendance = $pdo->query("SELECT ROUND(AVG(`Attendance %`),0) as a FROM Attendance_Summary_View")->fetch()['a'];
+$avg_gpa        = $pdo->query("SELECT ROUND(AVG(GPA),2) as g FROM Grades WHERE GPA > 0")->fetch()['g'];
+ 
+// Sirf ALL wali notifications Admin ke liye
+$stmt = $pdo->prepare("SELECT Message, Notification_Date FROM Notifications 
+                       WHERE Type = 'ALL'
+                       ORDER BY Notification_Date DESC LIMIT 5");
+$stmt->execute();
+$notifications = $stmt->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+/* Screenshot jesa design */
+.quick-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+.action-btn { 
+    background: #334155; 
+    color: white; 
+    padding: 18px; 
+    border-radius: 8px; 
+    text-align: center; 
+    font-weight: 600; 
+    text-decoration: none; 
+    transition: 0.3s;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.action-btn:hover { background: #1e293b; color: white; transform: translateY(-2px); }
+
+.table-section { background: #fff; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.table-section h2 { font-size: 20px; margin-bottom: 15px; font-weight: 600; }
+
+.table-section table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; }
+.table-section table th { 
+    background: #2563eb; 
+    color: white; 
+    padding: 14px 15px; 
+    text-align: center; 
+    font-weight: 600;
+    font-size: 15px;
+}
+.table-section table td { 
+    padding: 14px 15px; 
+    border-bottom: 1px solid #e5e7eb; 
+    font-size: 14px;
+    text-align: center;
+}
+.table-section table tr:hover { background: #f8fafc; }
+.table-section table tr:last-child td { border-bottom: none; }
+
+@media(max-width: 992px){ .quick-actions { grid-template-columns: repeat(2, 1fr); } }
+@media(max-width: 576px){ .quick-actions { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="students.php"><i class="bi bi-people"></i> Student Management</a></li>
+            <li><a href="faculty.php"><i class="bi bi-person-workspace"></i> Faculty Management</a></li>
+            <li><a href="departments.php"><i class="bi bi-building"></i> Department Management</a></li>
+            <li><a href="courses.php"><i class="bi bi-book"></i> Course Management</a></li>
+            <li><a href="attendance.php"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a></li>
+            <li><a href="analytics.php"><i class="bi bi-bar-chart-line"></i> Analytics</a></li>
+            <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+            <li><a href="profile.php"><i class="bi bi-person-circle"></i> Profile</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div class="dashboard-header">
+            <div>
+                <h1>Admin Dashboard</h1>
+                <p class="welcome-text">
+                    Welcome, <strong><?php echo $_SESSION['admin_name']; ?></strong><br>
+                    Smart Campus Attendance & Performance Analytics System
+                </p>
+            </div>
+            <div class="dashboard-date">
+                <h4 id="todayDate"></h4>
+            </div>
+        </div>
+ 
+        <!-- Dashboard Cards -->
+        <div class="cards">
+            <div class="card-box"><h3>Total Students</h3><p><?php echo $total_students; ?></p></div>
+            <div class="card-box"><h3>Total Faculty</h3><p><?php echo $total_faculty; ?></p></div>
+            <div class="card-box"><h3>Total Courses</h3><p><?php echo $total_courses; ?></p></div>
+            <div class="card-box"><h3>Departments</h3><p><?php echo $total_depts; ?></p></div>
+            <div class="card-box"><h3>At-Risk Students</h3><p><?php echo $at_risk; ?></p></div>
+            <div class="card-box"><h3>Average Attendance</h3><p><?php echo $avg_attendance ?? 0; ?>%</p></div>
+            <div class="card-box"><h3>Average GPA</h3><p><?php echo $avg_gpa ?? 0; ?></p></div>
+        </div>
+ 
+        <!-- System Summary -->
+        <div class="table-section">
+            <h2>System Summary</h2>
+            <p>The Smart Campus system currently manages <strong><?php echo $total_students; ?> Students</strong>, <strong><?php echo $total_faculty; ?> Faculty Members</strong>, <strong><?php echo $total_courses; ?> Courses</strong> across <strong><?php echo $total_depts; ?> Departments</strong>. Average attendance is <strong><?php echo $avg_attendance ?? 0; ?>%</strong> while the current <strong>Average GPA is <?php echo $avg_gpa ?? 0; ?></strong>.</p>
+        </div>
+ 
+        <!-- Charts -->
+        <div class="table-section"><h2>Attendance Trend</h2><div class="chart-container"><canvas id="attendanceChart"></canvas></div></div>
+        <div class="table-section"><h2>GPA Trend</h2><div class="chart-container"><canvas id="gpachart"></canvas></div></div>
+        <div class="table-section"><h2>Department Performance</h2><div class="chart-container"><canvas id="departmentChart"></canvas></div></div>
+        <div class="table-section"><h2>At-Risk Students</h2><div class="chart-container"><canvas id="riskChart"></canvas></div></div>
+ 
+        <!-- Quick Actions -->
+        <div class="table-section">
+            <h2>Quick Actions</h2>
+            <div class="quick-actions">
+                <a href="students.php" class="action-btn">Student Management</a>
+                <a href="faculty.php" class="action-btn">Faculty Management</a>
+                <a href="departments.php" class="action-btn">Department Management</a>
+                <a href="courses.php" class="action-btn">Course Management</a>
+                <a href="attendance.php" class="action-btn">Attendance</a>
+                <a href="grades.php" class="action-btn">Grade Management</a>
+                <a href="reports.php" class="action-btn">Reports</a>
+                <a href="analytics.php" class="action-btn">Analytics</a>
+            </div>
+        </div>
+ 
+        <!-- Recent Notifications - Screenshot jesi Center -->
+        <div class="table-section">
+            <h2>Recent Notifications</h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Notification</th>
+                    <th width="150">Date</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php if(count($notifications) > 0): ?>
+                    <?php foreach($notifications as $n): 
+                        $notif_date = date("Y-m-d", strtotime($n['Notification_Date']));
+                        $today = date("Y-m-d");
+                        $yesterday = date("Y-m-d", strtotime("-1 day"));
+                        $days_ago = floor((strtotime($today) - strtotime($notif_date)) / (60*60*24));
+                        
+                        if($notif_date == $today) $date_show = "Today";
+                        elseif($notif_date == $yesterday) $date_show = "Yesterday";
+                        else $date_show = $days_ago." days ago";
+                    ?>
+                    <tr>
+                        <td><?php echo $n['Message']; ?></td>
+                        <td><?php echo $date_show; ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr><td colspan="2" class="text-center">No recent notifications</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="../assets/js/analytics.js"></script>
+<script>
+let today = new Date();
+document.getElementById("todayDate").innerHTML = today.toDateString();
+</script>
+<footer style="text-align:center; padding:15px; color:#666; margin-left:250px;">
+    <p>© 2026 Smart Campus Attendance & Performance Analytics System</p>
+</footer>
+</body>
+</html>
+
+
+5 departments
+
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+ 
+// Add department
+if($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if($_POST['action'] === 'add') {
+        $stmt = $pdo->prepare(
+            "INSERT INTO Department (Department_Name) VALUES (?)"
+        );
+        $stmt->execute([$_POST['Department_Name']]);
+        header("Location: departments.php?success=added");
+        exit();
+    }
+    if($_POST['action'] === 'delete') {
+        $pdo->prepare("DELETE FROM Department WHERE Department_ID=?")
+            ->execute([$_POST['Department_ID']]);
+        header("Location: departments.php?success=deleted");
+        exit();
+    }
+    if($_POST['action'] === 'edit') {
+        $pdo->prepare("UPDATE Department SET Department_Name=? WHERE Department_ID=?")
+            ->execute([$_POST['Department_Name'], $_POST['Department_ID']]);
+        header("Location: departments.php?success=updated");
+        exit();
+    }
+}
+ 
+// Fetch departments with student count
+$departments = $pdo->query(
+    "SELECT d.*,
+     (SELECT COUNT(*) FROM Student s WHERE s.Department_ID=d.Department_ID) as Total_Students,
+     (SELECT COUNT(*) FROM Faculty f WHERE f.Department_ID=d.Department_ID) as Total_Faculty
+     FROM Department d
+     ORDER BY d.Department_ID"
+)->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Department Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="departments.php">Departments</a></li>
+            <li><a href="courses.php">Courses</a></li>
+            <li><a href="attendance.php">Attendance</a></li>
+            <li><a href="grades.php">Grades</a></li>
+            <li><a href="reports.php">Reports</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Department Management</h1>
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">Department <?php echo $_GET['success']; ?> successfully!</div>
+        <?php endif; ?>
+ 
+        <!-- Search + Add -->
+        <div class="student-actions">
+            <input type="text" id="searchInput"
+                   placeholder="Search Department"
+                   onkeyup="searchDepartment()"
+                   class="form-control"
+                   style="width:250px;display:inline-block">
+            <button class="add-btn"
+                    onclick="document.getElementById('addForm').style.display='block'">
+                Add Department
+            </button>
+        </div>
+ 
+        <!-- Add Department Form -->
+        <div id="addForm" style="display:none; background:white; padding:20px; border-radius:10px; margin:15px 0;">
+            <h3>Add New Department</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <input type="text" name="Department_Name"
+                       placeholder="Department Name"
+                       class="form-control mb-2" required>
+                <button type="submit" class="save-btn">Save Department</button>
+                <button type="button" class="delete-btn"
+                        onclick="document.getElementById('addForm').style.display='none'">
+                    Cancel
+                </button>
+            </form>
+        </div>
+ 
+        <!-- Departments Table -->
+        <div class="table-section">
+            <h2>Department List</h2>
+            <table id="departmentTable">
+                <tr>
+                    <th>Department ID</th>
+                    <th>Department Name</th>
+                    <th>Total Students</th>
+                    <th>Total Faculty</th>
+                    <th>Actions</th>
+                </tr>
+                <?php foreach($departments as $d): ?>
+                <tr>
+                    <td>D00<?php echo $d['Department_ID']; ?></td>
+                    <td><?php echo $d['Department_Name']; ?></td>
+                    <td><?php echo $d['Total_Students']; ?></td>
+                    <td><?php echo $d['Total_Faculty']; ?></td>
+                    <td>
+                        <button class="edit-btn"
+                                onclick="openEdit(
+                                    '<?php echo $d['Department_ID']; ?>',
+                                    '<?php echo $d['Department_Name']; ?>'
+                                )">Edit</button>
+                        <form method="POST" style="display:inline"
+                              onsubmit="return confirm('Delete this department?')">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="Department_ID"
+                                   value="<?php echo $d['Department_ID']; ?>">
+                            <button type="submit" class="delete-btn">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+    </div>
+</div>
+ 
+<!-- Edit Modal -->
+<div id="departmentModal" class="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">
+    <div class="modal-content" style="background:white;padding:30px;border-radius:10px;width:400px">
+        <span class="close-btn" onclick="closeModal()" style="cursor:pointer;float:right;font-size:20px">&times;</span>
+        <h2>Edit Department</h2>
+        <form method="POST">
+            <input type="hidden" name="action" value="edit">
+            <input type="hidden" name="Department_ID" id="edit_id">
+            <input type="text" name="Department_Name"
+                   id="edit_name"
+                   placeholder="Department Name"
+                   class="form-control mb-2" required>
+            <button type="submit" class="save-btn">Update Department</button>
+        </form>
+    </div>
+</div>
+ 
+<script>
+function openEdit(id, name){
+    document.getElementById('edit_id').value  = id;
+    document.getElementById('edit_name').value = name;
+    document.getElementById('departmentModal').style.display = 'flex';
+}
+function closeModal(){
+    document.getElementById('departmentModal').style.display = 'none';
+}
+function searchDepartment(){
+    let input = document.getElementById("searchInput").value.toLowerCase();
+    let rows  = document.getElementById("departmentTable").getElementsByTagName("tr");
+    for(let i=1; i<rows.length; i++){
+        rows[i].style.display = rows[i].innerText.toLowerCase().includes(input) ? "" : "none";
+    }
+}
+</script>
+</body>
+</html>
+ 
+6 edit_course
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+if(!isset($_GET['id'])){
+    header("Location: courses.php"); exit;
+}
+$id = $_GET['id'];
+
+$stmt = $pdo->prepare("SELECT * FROM Course WHERE Course_ID = ?");
+$stmt->execute([$id]);
+$course = $stmt->fetch();
+
+$departments = $pdo->query("SELECT * FROM Department")->fetchAll();
+$faculty = $pdo->query("SELECT * FROM Faculty")->fetchAll();
+
+if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $pdo->prepare("UPDATE Course SET Course_Name=?, Credit_Hours=?, Department_ID=?, Faculty_ID=?, Semester=? WHERE Course_ID=?")
+    ->execute([
+        $_POST['Course_Name'], $_POST['Credit_Hours'], $_POST['Department_ID'], 
+        $_POST['Faculty_ID'], $_POST['Semester'], $id
+    ]);
+    header("Location: courses.php?success=updated");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html>
+<head><title>Edit Course</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+<body>
+<div class="container mt-4" style="max-width:700px;">
+<h2>Edit Course - CS<?php echo $course['Course_ID']; ?></h2>
+<form method="POST">
+    <input type="text" name="Course_Name" value="<?php echo $course['Course_Name']; ?>" class="form-control mb-2" required>
+    <input type="number" name="Credit_Hours" value="<?php echo $course['Credit_Hours']; ?>" class="form-control mb-2" required>
+    <select name="Semester" class="form-control mb-2" required>
+        <?php for($i=1; $i<=8; $i++): ?>
+        <option value="<?php echo $i; ?>" <?php if($course['Semester']==$i) echo 'selected'; ?>>Semester <?php echo $i; ?></option>
+        <?php endfor; ?>
+    </select>
+    <select name="Department_ID" class="form-control mb-2" required>
+        <?php foreach($departments as $d):?>
+        <option value="<?php echo $d['Department_ID'];?>" <?php if($course['Department_ID']==$d['Department_ID']) echo 'selected';?>><?php echo $d['Department_Name'];?></option>
+        <?php endforeach;?>
+    </select>
+    <select name="Faculty_ID" class="form-control mb-2" required>
+        <?php foreach($faculty as $f):?>
+        <option value="<?php echo $f['Faculty_ID'];?>" <?php if($course['Faculty_ID']==$f['Faculty_ID']) echo 'selected';?>><?php echo $f['Faculty_Name'];?></option>
+        <?php endforeach;?>
+    </select>
+    <button type="submit" class="btn btn-success">Update Course</button>
+    <a href="courses.php" class="btn btn-secondary">Cancel</a>
+</form>
+</div>
+</body>
+</html>
+
+edit_faculty
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// Get Faculty ID
+if(!isset($_GET['id'])){
+    header("Location: faculty.php");
+    exit;
+}
+$id = $_GET['id'];
+
+// Fetch Faculty Data
+$stmt = $pdo->prepare("SELECT * FROM Faculty WHERE Faculty_ID = ?");
+$stmt->execute([$id]);
+$faculty = $stmt->fetch();
+
+if(!$faculty){
+    header("Location: faculty.php");
+    exit;
+}
+
+$departments = $pdo->query("SELECT * FROM Department")->fetchAll();
+
+// Update Faculty
+if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $stmt = $pdo->prepare("UPDATE Faculty SET Faculty_Name=?, Faculty_Email=?, Faculty_Phone=?, Designation=?, Department_ID=? WHERE Faculty_ID=?");
+    $stmt->execute([
+        $_POST['Faculty_Name'],
+        $_POST['Faculty_Email'],
+        $_POST['Faculty_Phone'],
+        $_POST['Designation'],
+        $_POST['Department_ID'],
+        $id
+    ]);
+    header("Location: faculty.php?success=updated");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edit Faculty</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="departments.php">Departments</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Edit Faculty - 0<?php echo $faculty['Faculty_ID']; ?></h1>
+        
+        <div id="editForm" style="background:white; padding:20px; border-radius:10px; margin:15px 0;">
+            <form method="POST">
+                <input type="text" name="Faculty_Name" value="<?php echo $faculty['Faculty_Name']; ?>" placeholder="Faculty Name" class="form-control mb-2" required>
+                <input type="email" name="Faculty_Email" value="<?php echo $faculty['Faculty_Email']; ?>" placeholder="Email" class="form-control mb-2" required>
+                <input type="text" name="Faculty_Phone" value="<?php echo $faculty['Faculty_Phone']; ?>" placeholder="Phone Number" class="form-control mb-2">
+                <input type="text" name="Designation" value="<?php echo $faculty['Designation']; ?>" placeholder="Designation e.g Professor" class="form-control mb-2">
+                
+                <select name="Department_ID" class="form-control mb-2" required>
+                    <option value="">Select Department</option>
+                    <?php foreach($departments as $d): ?>
+                    <option value="<?php echo $d['Department_ID']; ?>" <?php if($faculty['Department_ID']==$d['Department_ID']) echo 'selected'; ?>>
+                        <?php echo $d['Department_Name']; ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <button type="submit" class="save-btn">Update Faculty</button>
+                <a href="faculty.php" class="delete-btn" style="text-decoration:none; display:inline-block; text-align:center;">Cancel</a>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+edit_student
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// Get Student ID
+if(!isset($_GET['id'])){
+    header("Location: students.php");
+    exit;
+}
+$id = $_GET['id'];
+
+// Fetch Student Data
+$stmt = $pdo->prepare("SELECT * FROM Student WHERE Student_ID = ?");
+$stmt->execute([$id]);
+$student = $stmt->fetch();
+
+if(!$student){
+    header("Location: students.php");
+    exit;
+}
+
+$departments = $pdo->query("SELECT * FROM Department")->fetchAll();
+
+// Update Student
+if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $stmt = $pdo->prepare("UPDATE Student SET Roll_No=?, Student_Name=?, Student_Email=?, Student_Phone=?, Status=?, Department_ID=?, Semester=? WHERE Student_ID=?");
+    $stmt->execute([
+        $_POST['Roll_No'],
+        $_POST['Student_Name'],
+        $_POST['Student_Email'],
+        $_POST['Student_Phone'],
+        $_POST['Status'],
+        $_POST['Department_ID'],
+        $_POST['Semester'],
+        $id
+    ]);
+    header("Location: students.php?success=updated");
+    exit();
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edit Student</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.main-content { padding: 25px; }
+.form-container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); max-width: 800px; }
+.form-container h1 { font-size: 24px; margin-bottom: 20px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="students.php" class="active"><i class="bi bi-people"></i> Students</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div class="form-container">
+            <h1>Edit Student - S00<?php echo $student['Student_ID']; ?></h1>
+            <form method="POST">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label>Roll No</label>
+                        <input type="text" name="Roll_No" value="<?php echo $student['Roll_No']; ?>" class="form-control" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label>Student Name</label>
+                        <input type="text" name="Student_Name" value="<?php echo $student['Student_Name']; ?>" class="form-control" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label>Email</label>
+                        <input type="email" name="Student_Email" value="<?php echo $student['Student_Email']; ?>" class="form-control" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label>Phone</label>
+                        <input type="text" name="Student_Phone" value="<?php echo $student['Student_Phone']; ?>" class="form-control">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label>Semester</label>
+                        <select name="Semester" class="form-control">
+                            <option value="">Select Semester</option>
+                            <?php for($i=1; $i<=8; $i++): ?>
+                            <option value="<?php echo $i; ?>" <?php if($student['Semester']==$i) echo 'selected'; ?>>Semester <?php echo $i; ?></option>
+                            <?php endfor; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label>Status</label>
+                        <select name="Status" class="form-control">
+                            <option value="Active" <?php if($student['Status']=='Active') echo 'selected'; ?>>Active</option>
+                            <option value="Inactive" <?php if($student['Status']=='Inactive') echo 'selected'; ?>>Inactive</option>
+                            <option value="Graduated" <?php if($student['Status']=='Graduated') echo 'selected'; ?>>Graduated</option>
+                            <option value="Suspended" <?php if($student['Status']=='Suspended') echo 'selected'; ?>>Suspended</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        <label>Department</label>
+                        <select name="Department_ID" class="form-control" required>
+                            <?php foreach($departments as $d): ?>
+                            <option value="<?php echo $d['Department_ID']; ?>" <?php if($student['Department_ID']==$d['Department_ID']) echo 'selected'; ?>>
+                                <?php echo $d['Department_Name']; ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Update Student</button>
+                <a href="students.php" class="btn btn-secondary">Cancel</a>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+
+faculty
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// Add faculty
+if($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if($_POST['action'] === 'add') {
+        $stmt = $pdo->prepare(
+            "INSERT INTO Faculty
+             (Faculty_Name, Faculty_Email, Faculty_Password,
+              Faculty_Phone, Designation, Department_ID)
+             VALUES (?,?,?,?,?,?)"
+        );
+        $stmt->execute([
+            $_POST['Faculty_Name'],
+            $_POST['Faculty_Email'],
+            $_POST['Faculty_Password'],
+            $_POST['Faculty_Phone'],
+            $_POST['Designation'],
+            $_POST['Department_ID']
+        ]);
+        header("Location: faculty.php?success=added");
+        exit();
+    }
+    if($_POST['action'] === 'delete') {
+        $pdo->prepare("DELETE FROM Faculty WHERE Faculty_ID=?")
+            ->execute([$_POST['Faculty_ID']]);
+        header("Location: faculty.php?success=deleted");
+        exit();
+    }
+}
+
+// Fetch all faculty
+$faculty = $pdo->query(
+    "SELECT f.*, d.Department_Name
+     FROM Faculty f
+     JOIN Department d ON f.Department_ID = d.Department_ID
+     ORDER BY f.Faculty_ID DESC"
+)->fetchAll();
+
+// Fetch departments for dropdown
+$departments = $pdo->query("SELECT * FROM Department")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Faculty Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.btn-view { background: none; border: none; color: #334155; font-weight: 500; cursor:pointer; }
+.btn-edit { background: #f59e0b; color: white; padding: 6px 12px; border-radius: 6px; border: none; margin: 3px; text-decoration: none; display:inline-block; }
+.btn-edit:hover { color: white; background: #d97706; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="departments.php">Departments</a></li>
+            <li><a href="courses.php">Courses</a></li>
+            <li><a href="attendance.php">Attendance</a></li>
+            <li><a href="grades.php">Grades</a></li>
+            <li><a href="reports.php">Reports</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Faculty Management</h1>
+        <?php if(isset($_GET['success'])):?>
+        <div class="alert alert-success">Faculty <?php echo $_GET['success'];?> successfully!</div>
+        <?php endif;?>
+
+        <!-- Add Faculty Button -->
+        <div class="faculty-actions">
+            <input type="text" id="searchInput"
+                   placeholder="Search Faculty member"
+                   onkeyup="searchFaculty()"
+                   class="form-control"
+                   style="width:250px;display:inline-block">
+            <button class="add-btn"
+                    onclick="document.getElementById('addForm').style.display='block'">
+                Add Faculty
+            </button>
+        </div>
+
+        <!-- Add Faculty Form -->
+        <div id="addForm" style="display:none; background:white; padding:20px; border-radius:10px; margin:15px 0;">
+            <h3>Add New Faculty</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <input type="text" name="Faculty_Name"
+                       placeholder="Faculty Name"
+                       class="form-control mb-2" required>
+                <input type="email" name="Faculty_Email"
+                       placeholder="Email"
+                       class="form-control mb-2" required>
+                <input type="password" name="Faculty_Password"
+                       placeholder="Password"
+                       class="form-control mb-2" required>
+                <input type="text" name="Faculty_Phone"
+                       placeholder="Phone Number"
+                       class="form-control mb-2">
+                <select name="Department_ID"
+                        class="form-control mb-2" required>
+                    <option value="">Select Department</option>
+                    <?php foreach($departments as $d):?>
+                    <option value="<?php echo $d['Department_ID'];?>">
+                        <?php echo $d['Department_Name'];?>
+                    </option>
+                    <?php endforeach;?>
+                </select>
+                <input type="text" name="Designation"
+                       placeholder="Designation (e.g. Professor)"
+                       class="form-control mb-2">
+                <button type="submit" class="save-btn">Save Faculty</button>
+                <button type="button" class="delete-btn"
+                        onclick="document.getElementById('addForm').style.display='none'">
+                    Cancel
+                </button>
+            </form>
+        </div>
+
+        <!-- Faculty Table -->
+        <div class="table-section">
+            <h2>Faculty List</h2>
+            <table id="facultyTable">
+                <tr>
+                    <th>Faculty ID</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Department</th>
+                    <th>Designation</th>
+                    <th>Actions</th>
+                </tr>
+                <?php foreach($faculty as $f):?>
+                <tr>
+                    <td>0<?php echo $f['Faculty_ID'];?></td>
+                    <td><?php echo $f['Faculty_Name'];?></td>
+                    <td><?php echo $f['Faculty_Email'];?></td>
+                    <td><?php echo $f['Faculty_Phone'];?></td>
+                    <td><?php echo $f['Department_Name'];?></td>
+                    <td><?php echo $f['Designation'];?></td>
+                    <td>
+                        <button class="view-btn"
+                                onclick="alert('Name: <?php echo $f['Faculty_Name'];?>\nEmail: <?php echo $f['Faculty_Email'];?>\nDept: <?php echo $f['Department_Name'];?>')">
+                            View
+                        </button>
+                        <a href="edit_faculty.php?id=<?php echo $f['Faculty_ID'];?>" class="btn-edit">Edit</a>
+                        <form method="POST" style="display:inline"
+                              onsubmit="return confirm('Delete this faculty?')">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="Faculty_ID"
+                                   value="<?php echo $f['Faculty_ID'];?>">
+                            <button type="submit" class="delete-btn">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                <?php endforeach;?>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+function searchFaculty(){
+    let input = document.getElementById("searchInput").value.toLowerCase();
+    let table = document.getElementById("facultyTable");
+    let rows = table.getElementsByTagName("tr");
+    for(let i=1; i<rows.length; i++){
+        rows[i].style.display = rows[i].innerText.toLowerCase().includes(input)? "" : "none";
+    }
+}
+</script>
+</body>
+</html>
+
+grades
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// 1. Save/Update grades
+if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['Student_ID'])){
+    $sid   = intval($_POST['Student_ID']);
+    $cid   = intval($_POST['Course_ID']);
+    $semid = intval($_POST['Semester_ID']);
+    $quiz  = intval($_POST['Quiz_Marks']);
+    $asgn  = intval($_POST['Assignment_Marks']);
+    $mid   = intval($_POST['Mid_Marks']);
+    $final = intval($_POST['Final_Marks']);
+
+    // Calculate
+    $total = $quiz + $asgn + $mid + $final;
+    $percentage = $total; // 100 me se hai
+
+    if($total >= 90){ $grade = 'A+'; $gpa = 4.00; }
+    elseif($total >= 85){ $grade = 'A';  $gpa = 3.70; }
+    elseif($total >= 80){ $grade = 'B+'; $gpa = 3.30; }
+    elseif($total >= 75){ $grade = 'B';  $gpa = 3.00; }
+    elseif($total >= 70){ $grade = 'B-'; $gpa = 2.70; }
+    elseif($total >= 65){ $grade = 'C+'; $gpa = 2.30; }
+    elseif($total >= 60){ $grade = 'C';  $gpa = 2.00; }
+    else{ $grade = 'F'; $gpa = 0.00; }
+
+    // Check if exists then update else insert
+    $check = $pdo->prepare("SELECT COUNT(*) as c FROM Grades WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?");
+    $check->execute([$sid, $cid, $semid]);
+    
+    if($check->fetch()['c'] > 0){
+        $pdo->prepare("UPDATE Grades SET Quiz_Marks=?, Assignment_Marks=?, Mid_Marks=?, Final_Marks=?, Total_Marks=?, Percentage=?, Grade=?, GPA=? WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?")
+        ->execute([$quiz, $asgn, $mid, $final, $total, $percentage, $grade, $gpa, $sid, $cid, $semid]);
+    } else {
+        $pdo->prepare("INSERT INTO Grades (Student_ID, Course_ID, Semester_ID, Quiz_Marks, Assignment_Marks, Mid_Marks, Final_Marks, Total_Marks, Percentage, Grade, GPA) VALUES (?,?,?,?,?,?,?)")
+        ->execute([$sid, $cid, $semid, $quiz, $asgn, $mid, $final, $total, $percentage, $grade, $gpa]);
+    }
+    
+    header("Location: grades.php?success=1");
+    exit();
+}
+
+// 2. Delete/Reset grades
+if(isset($_GET['delete'])){
+    $parts = explode('-', $_GET['delete']);
+    $pdo->prepare("UPDATE Grades SET Quiz_Marks=0, Assignment_Marks=0, Mid_Marks=0, Final_Marks=0, Total_Marks=0, Grade='F', Percentage=0, GPA=0, CGPA=0 WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?")
+    ->execute($parts);
+    header("Location: grades.php?success=deleted");
+    exit();
+}
+
+// 3. Fetch Data from View
+$grades = $pdo->query("SELECT * FROM Student_Performance_View")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grade Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.edit-btn { background: #f59e0b; color: white; padding: 6px 12px; border-radius: 6px; border: none; margin-right:5px; }
+.delete-btn { background: #dc2626; color: white; padding: 6px 12px; border-radius: 6px; border: none; }
+.view-btn { background: #e5e7eb; color: #000; padding: 6px 12px; border-radius: 6px; border: none; margin-right:5px; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="grades.php" class="active">Grades</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Student Grades</h1>
+
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">✅ Grades <?php echo $_GET['success'] === 'deleted' ? 'reset' : 'saved'; ?> successfully!</div>
+        <?php endif; ?>
+
+        <div class="table-section">
+            <table class="table table-bordered align-middle">
+                <thead style="background:#2563eb; color:white;">
+                    <tr>
+                        <th>Student Name</th>
+                        <th>Course</th>
+                        <th>Semester</th>
+                        <th>Quiz<br><small>max 20</small></th>
+                        <th>Assignment<br><small>max 10</small></th>
+                        <th>Mid<br><small>max 30</small></th>
+                        <th>Final<br><small>max 40</small></th>
+                        <th>Total</th>
+                        <th>%</th>
+                        <th>Grade</th>
+                        <th>GPA</th>
+                        <th>CGPA</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach($grades as $g): ?>
+                    <tr>
+                        <td><?php echo $g['Student Name']; ?></td>
+                        <td><?php echo $g['Course']; ?></td>
+                        <td><?php echo $g['Semester']; ?></td>
+                        <td><input type="number" min="0" max="20" class="quiz-inp" value="<?php echo $g['Quiz']; ?>" style="width:60px"></td>
+                        <td><input type="number" min="0" max="10" class="assign-inp" value="<?php echo $g['Assignment']; ?>" style="width:60px"></td>
+                        <td><input type="number" min="0" max="30" class="mid-inp" value="<?php echo $g['Mid']; ?>" style="width:60px"></td>
+                        <td><input type="number" min="0" max="40" class="final-inp" value="<?php echo $g['Final']; ?>" style="width:60px"></td>
+                        <td class="total-cell"><?php echo $g['Total']; ?></td>
+                        <td><?php echo $g['Percentage']; ?>%</td>
+                        <td><?php echo $g['Grade']; ?></td>
+                        <td><?php echo $g['GPA']; ?></td>
+                        <td><?php echo $g['CGPA']; ?></td>
+                        <td>
+                            <!-- Hidden IDs for JS -->
+                            <input type="hidden" class="sid" value="<?php echo $g['Student ID']; ?>">
+                            <input type="hidden" class="cid" value="<?php echo $g['Course_ID']; ?>">
+                            <input type="hidden" class="semid" value="<?php echo $g['Semester_ID']; ?>">
+                            
+                            <button class="view-btn" onclick="alert('Student: <?php echo $g['Student Name']; ?>\nTotal: <?php echo $g['Total']; ?>\nGrade: <?php echo $g['Grade']; ?>')">View</button>
+                            <button class="edit-btn" onclick="saveGrade(this)">Edit</button>
+                            <a href="grades.php?delete=<?php echo $g['Student ID'].'-'.$g['Course_ID'].'-'.$g['Semester_ID']; ?>" class="delete-btn" onclick="return confirm('Reset grades for <?php echo $g['Student Name']; ?>?')">Delete</a>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden Form for Saving -->
+<form id="saveForm" method="POST" style="display:none">
+    <input type="hidden" name="Student_ID" id="f_sid">
+    <input type="hidden" name="Course_ID" id="f_cid">
+    <input type="hidden" name="Semester_ID" id="f_semid">
+    <input type="hidden" name="Quiz_Marks" id="f_quiz">
+    <input type="hidden" name="Assignment_Marks" id="f_assign">
+    <input type="hidden" name="Mid_Marks" id="f_mid">
+    <input type="hidden" name="Final_Marks" id="f_final">
+</form>
+
+<script>
+function saveGrade(btn){
+    let row    = btn.closest('tr');
+    let quiz   = parseInt(row.querySelector('.quiz-inp').value) || 0;
+    let assign = parseInt(row.querySelector('.assign-inp').value) || 0;
+    let mid    = parseInt(row.querySelector('.mid-inp').value) || 0;
+    let final  = parseInt(row.querySelector('.final-inp').value) || 0;
+
+    if(quiz > 20)  { alert('Quiz max 20!');  return; }
+    if(assign > 10){ alert('Assignment max 10!'); return; }
+    if(mid > 30)   { alert('Mid max 30!');   return; }
+    if(final > 40) { alert('Final max 40!'); return; }
+
+    document.getElementById('f_sid').value    = row.querySelector('.sid').value;
+    document.getElementById('f_cid').value    = row.querySelector('.cid').value;
+    document.getElementById('f_semid').value  = row.querySelector('.semid').value;
+    document.getElementById('f_quiz').value   = quiz;
+    document.getElementById('f_assign').value = assign;
+    document.getElementById('f_mid').value    = mid;
+    document.getElementById('f_final').value  = final;
+    document.getElementById('saveForm').submit();
+}
+</script>
+</body>
+</html>
+
+
+notifications
+
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+if($_SERVER['REQUEST_METHOD']==='POST'){
+    $type=$_POST['Type'];
+    $msg=$_POST['Message'];
+    if($type==='ALL'){
+        $students=$pdo->query("SELECT Student_ID FROM Student")->fetchAll();
+        foreach($students as $s){
+            $pdo->prepare("INSERT INTO Notifications (Type,Notification_Date,Message,Admin_ID,Student_ID,Faculty_ID) VALUES ('ALL',CURDATE(),?,1,?,NULL)")->execute([$msg,$s['Student_ID']]);
+        }
+    } else {
+        $pdo->prepare("INSERT INTO Notifications (Type,Notification_Date,Message,Admin_ID,Student_ID,Faculty_ID) VALUES (?,CURDATE(),?,1,?,NULL)")->execute([$type,$msg,$_POST['Recipient_ID']??null]);
+    }
+    header("Location: notifications.php"); exit();
+}
+$notifications=$pdo->query("SELECT n.*,s.Student_Name FROM Notifications n LEFT JOIN Student s ON n.Student_ID=s.Student_ID ORDER BY n.Notification_Date DESC")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Notifications</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Notifications</h1>
+        <div class="table-section" style="margin-bottom:20px">
+            <h2>Send Notification</h2>
+            <form method="POST">
+                <select name="Type" class="form-control mb-2">
+                    <option value="Student">Student</option>
+                    <option value="Faculty">Faculty</option>
+                    <option value="ALL">ALL</option>
+                </select>
+                <input type="text" name="Message" class="form-control mb-2" placeholder="Message" required>
+                <button type="submit" class="save-btn">Send</button>
+            </form>
+        </div>
+        <div class="table-section">
+            <h2>Latest Notifications</h2>
+            <table>
+                <tr><th>ID</th><th>Type</th><th>Recipient</th><th>Message</th><th>Date</th></tr>
+                <?php foreach($notifications as $n): ?>
+                <tr>
+                    <td>N00<?php echo $n['Notification_ID']; ?></td>
+                    <td><?php echo $n['Type']; ?></td>
+                    <td><?php echo $n['Student_Name']??'All'; ?></td>
+                    <td><?php echo $n['Message']; ?></td>
+                    <td><?php echo $n['Notification_Date']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+profile
+
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+$admin_id = $_SESSION['admin_id'];
+ 
+// Update profile
+if($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if(!empty($_POST['password'])) {
+        $stmt = $pdo->prepare(
+            "UPDATE Admin SET Admin_Name=?, Admin_Email=?, Admin_Password=?
+             WHERE Admin_ID=?"
+        );
+        $stmt->execute([
+            $_POST['name'],
+            $_POST['email'],
+            $_POST['password'],
+            $admin_id
+        ]);
+    } else {
+        $stmt = $pdo->prepare(
+            "UPDATE Admin SET Admin_Name=?, Admin_Email=?
+             WHERE Admin_ID=?"
+        );
+        $stmt->execute([
+            $_POST['name'],
+            $_POST['email'],
+            $admin_id
+        ]);
+    }
+    $_SESSION['admin_name'] = $_POST['name'];
+    header("Location: profile.php?success=1");
+    exit();
+}
+ 
+// Fetch admin data
+$admin = $pdo->prepare("SELECT * FROM Admin WHERE Admin_ID=?");
+$admin->execute([$admin_id]);
+$admin = $admin->fetch();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profile</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="students.php">Students</a></li>
+            <li><a href="faculty.php">Faculty</a></li>
+            <li><a href="departments.php">Departments</a></li>
+            <li><a href="courses.php">Courses</a></li>
+            <li><a href="attendance.php">Attendance</a></li>
+            <li><a href="grades.php">Grades</a></li>
+            <li><a href="reports.php">Reports</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>My Profile</h1>
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">✅ Profile updated successfully!</div>
+        <?php endif; ?>
+        <div class="table-section">
+            <form method="POST">
+                <input
+                    type="text"
+                    name="name"
+                    placeholder="Full Name"
+                    value="<?php echo htmlspecialchars($admin['Admin_Name']); ?>"
+                    class="form-control mb-2"
+                    required>
+                <input
+                    type="email"
+                    name="email"
+                    placeholder="Email"
+                    value="<?php echo htmlspecialchars($admin['Admin_Email']); ?>"
+                    class="form-control mb-2"
+                    required>
+                <input
+                    type="text"
+                    placeholder="Department"
+                    value="Computer Science"
+                    class="form-control mb-2"
+                    readonly>
+                <input
+                    type="password"
+                    name="password"
+                    placeholder="New Password (leave empty to keep current)"
+                    class="form-control mb-2">
+                <button type="submit" class="save-btn">
+                    Update Profile
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+ 
+
+reports
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+ 
+if($_SERVER['REQUEST_METHOD'] === 'POST'){
+    $pdo->prepare(
+        "INSERT INTO Reports (Report_Type,Generated_Date,Admin_ID,Student_ID,Semester_ID)
+         VALUES (?,CURDATE(),1,NULL,1)"
+    )->execute([$_POST['Report_Type']]);
+    header("Location: reports.php"); exit();
+}
+ 
+$reports     = $pdo->query("SELECT * FROM Reports ORDER BY Generated_Date DESC")->fetchAll();
+$performance = $pdo->query("SELECT * FROM Student_Performance_View")->fetchAll();
+$attendance  = $pdo->query("SELECT * FROM Attendance_Summary_View")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reports</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.table-section { background: white; padding: 20px; border-radius: 10px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+#perfTable, #attTable, #reportTable { width: 100%; border-collapse: collapse; }
+#perfTable thead th, #attTable thead th, #reportTable thead th { background: #2563eb; color: white; padding: 12px; text-align: center; }
+#perfTable tbody td, #attTable tbody td, #reportTable tbody td { padding: 10px; text-align: center; border-bottom: 1px solid #e5e7eb; }
+.save-btn { background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; border: none; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="grades.php">Grades</a></li>
+            <li><a href="reports.php" class="active">Reports</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Reports</h1>
+ 
+        <div class="student-actions">
+            <form method="POST" style="display:flex; gap:10px; align-items:center">
+                <select name="Report_Type" id="reportType" class="form-control" style="width:300px;">
+                    <option>Student Performance Report</option>
+                    <option>Attendance Report</option>
+                    <option>Department Performance Report</option>
+                </select>
+                <button type="submit" class="save-btn">Generate Report</button>
+                <button type="button" class="save-btn" onclick="downloadPDF()">Download PDF</button>
+                <button type="button" class="save-btn" onclick="exportExcel()">Export Excel</button>
+            </form>
+        </div>
+ 
+        <!-- Generated Reports List -->
+        <div class="table-section">
+            <h2>Generated Reports</h2>
+            <table id="reportTable">
+                <thead>
+                <tr>
+                    <th>Report ID</th>
+                    <th>Report Type</th>
+                    <th>Generated Date</th>
+                    <th>Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach($reports as $r): ?>
+                <tr>
+                    <td>R00<?php echo $r['Report_ID']; ?></td>
+                    <td><?php echo $r['Report_Type']; ?></td>
+                    <td><?php echo $r['Generated_Date']; ?></td>
+                    <td>
+                        <button class="save-btn" onclick="downloadPDF()">PDF</button>
+                        <button class="save-btn" onclick="exportExcel()">Excel</button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+ 
+        <!-- Student Performance Report -->
+        <div class="table-section">
+            <h2>Student Performance Report</h2>
+            <table id="perfTable">
+                <thead>
+                <tr>
+                    <th>Student ID</th>
+                    <th>Name</th>
+                    <th>Course</th>
+                    <th>Total</th>
+                    <th>Grade</th>
+                    <th>GPA</th>
+                    <th>CGPA</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach($performance as $p): ?>
+                <tr>
+                    <td>S00<?php echo $p['Student ID']; ?></td>
+                    <td><?php echo $p['Student Name']; ?></td>
+                    <td><?php echo $p['Course']; ?></td>
+                    <td><?php echo $p['Total']; ?></td>  <!-- FIX 1: Total Marks -> Total -->
+                    <td><?php echo $p['Grade']; ?></td>
+                    <td><?php echo number_format($p['GPA'], 2); ?></td>
+                    <td><?php echo number_format($p['CGPA'], 2); ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+ 
+        <!-- Attendance Report -->
+        <div class="table-section">
+            <h2>Attendance Report</h2>
+            <table id="attTable">
+                <thead>
+                <tr>
+                    <th>Student</th>
+                    <th>Course</th>
+                    <th>Total</th>
+                    <th>Present</th>
+                    <th>Absent</th>
+                    <th>Attendance %</th>
+                    <th>Status</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach($attendance as $a): ?>
+                <tr>
+                    <td><?php echo $a['Student Name']; ?></td>
+                    <td><?php echo $a['Course']; ?></td>
+                    <td><?php echo $a['Total Classes']; ?></td>
+                    <td><?php echo $a['Present']; ?></td>
+                    <td><?php echo $a['Absent']; ?></td>
+                    <td><?php echo $a['Attendance %']; ?>%</td> <!-- FIX 2: Space wala naam ' me rakhna zaroori -->
+                    <td style="color:<?php echo $a['Status']==='AT RISK'?'red':'green'; ?>; font-weight:600;">
+                        <?php echo $a['Status'] === 'AT RISK' ? '⚠ AT RISK' : '✓ OK'; ?>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+function downloadPDF(){ window.print(); }
+function exportExcel(){
+    let rows = document.querySelectorAll('#perfTable tr');
+    let csv  = [];
+    rows.forEach(row => {
+        let data = Array.from(row.querySelectorAll('th,td')).map(c => c.innerText);
+        csv.push(data.join(','));
+    });
+    let blob = new Blob([csv.join('\n')], {type:'text/csv'});
+    let a    = document.createElement('a');
+    a.href   = URL.createObjectURL(blob);
+    a.download = 'Student_Performance_Report.csv';
+    a.click();
+}
+</script>
+</body>
+</html>
+
+student
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// Add Student
+if($_SERVER['REQUEST_METHOD']==='POST'){
+    if($_POST['action']==='add'){
+        $stmt=$pdo->prepare("INSERT INTO Student (Roll_No,Student_Name,Student_Email,Student_Password,Student_Phone,Status,Department_ID,Semester) VALUES (?,?,?,?,?,?,?,?)");
+        $stmt->execute([$_POST['Roll_No'],$_POST['Student_Name'],$_POST['Student_Email'],$_POST['Student_Password'],$_POST['Student_Phone'],$_POST['Status'],$_POST['Department_ID'],$_POST['Semester']]);
+        header("Location: students.php?success=added"); exit();
+    }
+    if($_POST['action']==='delete'){
+        $pdo->prepare("DELETE FROM Student WHERE Student_ID=?")->execute([$_POST['Student_ID']]);
+        header("Location: students.php?success=deleted"); exit();
+    }
+}
+
+// Search + Filter
+$search = $_GET['search'] ?? '';
+$dept_filter = $_GET['department'] ?? '';
+$sem_filter = $_GET['semester'] ?? '';
+
+$query = "SELECT s.*,d.Department_Name FROM Student s JOIN Department d ON s.Department_ID=d.Department_ID WHERE 1=1";
+$params = [];
+if($search != ''){
+    $query .= " AND (s.Student_Name LIKE ? OR s.Student_ID LIKE ? OR s.Roll_No LIKE ?)";
+    $params[] = "%$search%"; $params[] = "%$search%"; $params[] = "%$search%";
+}
+if($dept_filter != ''){ $query .= " AND s.Department_ID = ?"; $params[] = $dept_filter; }
+if($sem_filter != ''){ $query .= " AND s.Semester = ?"; $params[] = $sem_filter; }
+$query .= " ORDER BY s.Student_ID DESC";
+
+$stmt = $pdo->prepare($query);
+$stmt->execute($params);
+$students=$stmt->fetchAll();
+$departments=$pdo->query("SELECT * FROM Department")->fetchAll();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.main-content { padding: 25px; }
+.page-header h1 { font-size: 28px; font-weight: 700; color: #1e293b; margin-bottom: 20px; }
+.add-btn { background: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; border: none; font-weight: 600; margin-bottom: 15px; }
+.add-btn:hover { background: #1e40af; }
+
+.filters { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+.filters input, .filters select { padding: 10px; border: 1px solid #ddd; border-radius: 8px; flex: 1; min-width: 200px; }
+
+.table-section { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.table-section h2 { font-size: 20px; margin-bottom: 15px; font-weight: 600; }
+
+#studentTable { width: 100%; border-collapse: collapse; }
+#studentTable thead th { 
+    background: #2563eb; 
+    color: white; 
+    padding: 14px 12px; 
+    text-align: center; 
+    font-weight: 600;
+}
+#studentTable tbody td { 
+    padding: 14px 12px; 
+    border-bottom: 1px solid #e5e7eb; 
+    text-align: center;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+#studentTable tbody tr:hover { background: #f8fafc; }
+
+.btn-view { background: #3b82f6; color: white; padding: 6px 15px; border-radius: 6px; text-decoration: none; border: none; display: inline-block; margin: 3px; font-size: 14px; }
+.btn-view:hover { background: #2563eb; color: white; }
+.btn-edit { background: #f59e0b; color: white; padding: 6px 15px; border-radius: 6px; text-decoration: none; border: none; display: inline-block; margin: 3px; font-size: 14px; }
+.btn-edit:hover { background: #d97706; color: white; }
+.delete-btn { background: #dc3545; color: white; padding: 6px 15px; border-radius: 6px; border: none; display: inline-block; margin: 3px; font-size: 14px; }
+.delete-btn:hover { background: #b02a37; }
+.badge { padding: 5px 10px; border-radius: 20px; font-size: 12px; }
+.bg-success { background: #22c55e; color: white; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="students.php" class="active"><i class="bi bi-people"></i> Students</a></li>
+            <li><a href="faculty.php"><i class="bi bi-person-workspace"></i> Faculty</a></li>
+            <li><a href="departments.php"><i class="bi bi-building"></i> Departments</a></li>
+            <li><a href="courses.php"><i class="bi bi-book"></i> Courses</a></li>
+            <li><a href="attendance.php"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div class="page-header">
+            <h1>Student Management</h1>
+        </div>
+
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">Student <?php echo $_GET['success']; ?> successfully!</div>
+        <?php endif; ?>
+
+        <!-- Filters -->
+        <form method="GET" class="filters">
+            <input type="text" name="search" placeholder="Search Student" value="<?php echo $search; ?>">
+            <select name="department">
+                <option value="">All Departments</option>
+                <?php foreach($departments as $d): ?>
+                <option value="<?php echo $d['Department_ID']; ?>" <?php if($dept_filter==$d['Department_ID']) echo 'selected'; ?>>
+                    <?php echo $d['Department_Name']; ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+            <select name="semester">
+                <option value="">All Semesters</option>
+                <?php for($i=1; $i<=8; $i++): ?>
+                <option value="<?php echo $i; ?>" <?php if($sem_filter==$i) echo 'selected'; ?>>Semester <?php echo $i; ?></option>
+                <?php endfor; ?>
+            </select>
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+
+        <button class="add-btn" onclick="document.getElementById('addForm').style.display='block'"><i class="bi bi-plus-lg"></i> Add Student</button>
+
+        <!-- Add Form -->
+        <div id="addForm" style="display:none; background:white; padding:20px; border-radius:10px; margin:15px 0;">
+            <h3>Add New Student</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add">
+                <div class="row">
+                    <div class="col-md-6"><input type="text" name="Roll_No" placeholder="Roll No e.g 22-CS-101" required class="form-control mb-2"></div>
+                    <div class="col-md-6"><input type="text" name="Student_Name" placeholder="Student Name" required class="form-control mb-2"></div>
+                    <div class="col-md-6"><input type="email" name="Student_Email" placeholder="Email" required class="form-control mb-2"></div>
+                    <div class="col-md-6"><input type="password" name="Student_Password" placeholder="Password" required class="form-control mb-2"></div>
+                    <div class="col-md-6"><input type="text" name="Student_Phone" placeholder="Phone" class="form-control mb-2"></div>
+                    <div class="col-md-6">
+                        <select name="Semester" class="form-control mb-2" required>
+                            <option value="">Select Semester</option>
+                            <?php for($i=1; $i<=8; $i++) echo "<option value='$i'>Semester $i</option>"; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <select name="Status" class="form-control mb-2">
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                            <option value="Graduated">Graduated</option>
+                            <option value="Suspended">Suspended</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <select name="Department_ID" class="form-control mb-2" required>
+                            <option value="">Select Department</option>
+                            <?php foreach($departments as $d): ?>
+                            <option value="<?php echo $d['Department_ID']; ?>"><?php echo $d['Department_Name']; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-success">Add Student</button>
+                <button type="button" onclick="document.getElementById('addForm').style.display='none'" class="btn btn-secondary">Cancel</button>
+            </form>
+        </div>
+
+        <!-- Students List -->
+        <div class="table-section">
+            <h2>Students List</h2>
+            <table id="studentTable">
+                <thead>
+                    <tr>
+                        <th>Student ID</th>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Phone</th>
+                        <th>Status</th>
+                        <th>Department</th>
+                        <th>Semester</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if(count($students) > 0): ?>
+                    <?php foreach($students as $s): ?>
+                    <tr>
+                        <td>S00<?php echo $s['Student_ID']; ?></td>
+                        <td><?php echo $s['Roll_No']; ?></td>
+                        <td><?php echo $s['Student_Name']; ?></td>
+                        <td><?php echo $s['Student_Email']; ?></td>
+                        <td><?php echo $s['Student_Phone']; ?></td>
+                        <td><span class="badge bg-success"><?php echo $s['Status']; ?></span></td>
+                        <td><?php echo $s['Department_Name']; ?></td>
+                        <td>Semester <?php echo $s['Semester']; ?></td>
+                        <td>
+                            <a href="view_student.php?id=<?php echo $s['Student_ID']; ?>" class="btn-view">View</a>
+                            <a href="edit_student.php?id=<?php echo $s['Student_ID']; ?>" class="btn-edit">Edit</a>
+                            <form method="POST" style="display:inline" onsubmit="return confirm('Delete this student?')">
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="Student_ID" value="<?php echo $s['Student_ID']; ?>">
+                                <button type="submit" class="delete-btn">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr><td colspan="9" class="text-center">No students found</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+view_student
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkAdminLogin();
+
+// Get Student ID
+if(!isset($_GET['id'])){
+    header("Location: students.php");
+    exit;
+}
+$id = $_GET['id'];
+
+// Fetch Student Data with Department
+$stmt = $pdo->prepare("SELECT s.*, d.Department_Name FROM Student s 
+                       LEFT JOIN Department d ON s.Department_ID = d.Department_ID 
+                       WHERE s.Student_ID = ?");
+$stmt->execute([$id]);
+$student = $stmt->fetch();
+
+if(!$student){
+    header("Location: students.php");
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>View Student</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.main-content { padding: 25px; }
+.card-view { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); max-width: 800px; }
+.card-view h1 { font-size: 24px; margin-bottom: 20px; font-weight: 700; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
+.detail-row { display: flex; padding: 12px 0; border-bottom: 1px solid #f1f5f9; }
+.detail-label { font-weight: 600; width: 200px; color: #475569; }
+.detail-value { color: #1e293b; }
+.badge { padding: 6px 12px; border-radius: 20px; font-size: 13px; }
+.bg-success { background: #22c55e; color: white; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="students.php" class="active"><i class="bi bi-people"></i> Students</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div class="card-view">
+            <h1>Student Details - S00<?php echo $student['Student_ID']; ?></h1>
+            
+            <div class="detail-row">
+                <div class="detail-label">Student ID:</div>
+                <div class="detail-value">S00<?php echo $student['Student_ID']; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Roll No:</div>
+                <div class="detail-value"><?php echo $student['Roll_No']; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Full Name:</div>
+                <div class="detail-value"><?php echo $student['Student_Name']; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Email:</div>
+                <div class="detail-value"><?php echo $student['Student_Email']; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Phone:</div>
+                <div class="detail-value"><?php echo $student['Student_Phone'] ?? '-'; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Department:</div>
+                <div class="detail-value"><?php echo $student['Department_Name']; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Semester:</div>
+                <div class="detail-value"><?php echo $student['Semester'] ?? '-'; ?></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Status:</div>
+                <div class="detail-value"><span class="badge bg-success"><?php echo $student['Status']; ?></span></div>
+            </div>
+
+            <div style="margin-top: 20px;">
+                <a href="edit_student.php?id=<?php echo $student['Student_ID']; ?>" class="btn btn-warning">Edit</a>
+                <a href="students.php" class="btn btn-secondary">Back to List</a>
+            </div>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+
+
+assets
+css
+style.css
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:Arial, Helvetica, sans-serif;
+}
+body{
+    background:#f4f6f9;
+    color:#333;
+}
+.wrapper{
+    display:flex;
+    min-height:100vh;
+}
+
+.sidebar{
+    position:fixed;
+    top:0;
+    left:0;
+    width:250px;
+    height:100vh;
+    background:#0b2450;
+    color:#fff;
+    overflow-y:auto;
+    box-shadow:2px 0 10px rgba(0,0,0,.15);
+    z-index:1000;
+}
+.sidebar h2{
+    padding:25px;
+    text-align:center;
+    font-size:28px;
+    font-weight:bold;
+    border-bottom:1px solid rgba(255,255,255,.15);
+}
+.sidebar ul{
+    list-style:none;
+    padding:15px 0;
+}
+.sidebar ul li a{
+    display:block;
+    text-decoration:none;
+    color:white;
+    padding:15px 25px;
+    transition:.3s;
+    font-size:16px;
+}
+.sidebar ul li a:hover{
+    background:#163d7a;
+    padding-left:35px;
+}
+.sidebar ul li a.active{
+    background:#2563eb;
+    color:white;
+    border-left:5px solid #60a5fa;
+    font-weight:bold;
+}
+.sidebar i{
+    margin-right:12px;
+    font-size:18px;
+    width:20px;
+    text-align:center;
+}
+
+.main-content{
+    margin-left:250px;
+    width:calc(100% - 250px);
+    padding:35px;
+}
+.main-content h1{
+    color:#0b2450;
+    font-size:34px;
+    font-weight:bold;
+    margin-bottom:10px;
+}
+.welcome-text{
+    color:#6b7280;
+    margin-bottom:30px;
+    line-height:1.7;
+}
+.dashboard-date{
+    text-align:right;
+    color:#6b7280;
+    margin-bottom:25px;
+}
+
+.cards{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:25px;
+    margin-bottom:35px;
+}
+.card-box{
+    background:white;
+    border-radius:10px;
+    padding:25px;
+    text-align:center;
+    box-shadow:0 3px 10px rgba(0,0,0,.08);
+    transition:.3s;
+}
+.card-box:hover{
+    transform:translateY(-5px);
+}
+.card-box h3{
+    color:#6b7280;
+    font-size:18px;
+    margin-bottom:15px;
+}
+.card-box p{
+    color:#2563eb;
+    font-size:30px;
+    font-weight:bold;
+}
+
+.table-section{
+    background:white;
+    padding:25px;
+    border-radius:10px;
+    margin-bottom:30px;
+    box-shadow:0 3px 10px rgba(0,0,0,.08);
+}
+table{
+    width:100%;
+    border-collapse:collapse;
+    background:white;
+    border-radius:8px;
+    overflow:hidden;
+}
+table th{
+    background:#2563eb;
+    color:white;
+    padding:14px;
+    text-align:center;
+    font-weight:600;
+    letter-spacing:.5px;
+}
+table td{
+    padding:13px;
+    text-align:center;
+    border-bottom:1px solid #e5e7eb;
+}
+table tr:nth-child(even){
+    background:#f8fafc;
+}
+table tr:hover{
+    background:#eef4ff;
+}
+
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], select{
+    width:280px;
+    height:45px;
+    padding:10px 15px;
+    border:1px solid #d1d5db;
+    border-radius:8px;
+    background:white;
+    font-size:15px;
+}
+input:focus, select:focus{
+    outline:none;
+    border:2px solid #2563eb;
+    box-shadow:0 0 6px rgba(37,99,235,.15);
+}
+button, .btn{
+    border:none;
+    cursor:pointer;
+    border-radius:8px;
+    padding:11px 20px;
+    font-size:15px;
+    text-decoration:none;
+    transition:.3s;
+}
+.add-btn, .save-btn{ background:#2563eb; color:white; }
+.add-btn:hover, .save-btn:hover{ background:#1d4ed8; }
+.edit-btn{ background:#f59e0b; color:white; }
+.edit-btn:hover{ background:#d97706; }
+.delete-btn{ background:#dc2626; color:white; }
+.delete-btn:hover{ background:#b91c1c; }
+
+   
+.chart-container{
+    background:white;
+    border-radius:10px;
+    padding:15px;
+    position:relative;
+    width:100%;
+    max-width:850px;
+    height:320px;
+    margin:20px auto;
+}
+.chart-container canvas{
+    width:100% !important;
+    height:100% !important;
+}
+
+.login-page{
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    min-height:100vh;
+    background:linear-gradient(135deg,#0d6efd,#0b1f3a);
+}
+.login-box{
+    width:430px;
+    max-width:90%;
+    background:white;
+    padding:40px;
+    border-radius:12px;
+    box-shadow:0 5px 18px rgba(0,0,0,.15);
+}
+.login-box h2{
+    text-align:center;
+    color:#1f2937;
+    margin-bottom:30px;
+}
+
+
+@media(max-width:992px){
+.main-content{ margin-left:0; width:100%; padding:20px; }
+.sidebar{ position:relative; width:100%; height:auto; }
+.wrapper{ flex-direction:column; }
+}
+@media(max-width:768px){
+.student-actions, .faculty-actions{ flex-direction:column; }
+.student-actions input, .student-actions button{ width:100%; }
+}
+html{ scroll-behavior:smooth; }
+
+js
+anayltics
+// Attendance Chart
+new Chart(document.getElementById("attendanceChart"), {
+    type: "line",
+    data: {
+        labels: ["Jan", "Feb", "Mar", "Apr", "May"],
+        datasets: [{
+            label: "Attendance %",
+            data: [82, 86, 89, 91, 94],
+            borderColor: "#0d6efd",
+            fill: false,
+            tension: 0.4
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false
+    }
+});
+// GPA Chart
+new Chart(document.getElementById("gpachart"), {
+    type: "bar",
+    data: {
+        labels: ["Semester 1", "Semester 2", "Semester 3", "Semester 4"],
+        datasets: [{
+            label: "Average GPA",
+            data: [3.1, 3.3, 3.5, 3.7],
+            backgroundColor: "#198754"
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false
+    }
+});
+// Department Performance
+new Chart(document.getElementById("departmentChart"), {
+    type: "bar",
+    data: {
+        labels: ["CS", "SE", "IT", "AI", "BBA"],
+        datasets: [{
+            label: "Attendance",
+            data: [92, 90, 88, 95, 86],
+            backgroundColor: "#0dcaf0"
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false
+    }
+});
+// At Risk Students
+new Chart(document.getElementById("riskChart"),{
+type:"pie",
+data:{
+labels:["Safe","At Risk"],
+datasets:[{
+data:[232,18],
+backgroundColor:[
+"#198754",
+"#dc3545"
+]
+}]
+},
+options:{
+responsive:true,
+maintainAspectRatio:false,
+plugins:{
+legend:{
+position:"bottom"
+}
+}
+}
+});
+
+
+script
+// Wait for page to load
+document.addEventListener("DOMContentLoaded", function() {
+
+    // Attendance Chart
+    const attendanceCtx = document.getElementById("attendanceChart");
+    if(attendanceCtx){
+        new Chart(attendanceCtx, {
+            type: "line",
+            data: {
+                labels: ["Jan", "Feb", "Mar", "Apr", "May"],
+                datasets: [{
+                    label: "Attendance %",
+                    data: [82, 86, 89, 91, 94],
+                    borderColor: "#0d6efd",
+                    fill: false,
+                    tension: 0.4
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    // GPA Chart
+    const gpaCtx = document.getElementById("gpachart");
+    if(gpaCtx){
+        new Chart(gpaCtx, {
+            type: "bar",
+            data: {
+                labels: ["Semester 1", "Semester 2", "Semester 3", "Semester 4"],
+                datasets: [{
+                    label: "Average GPA",
+                    data: [3.1, 3.3, 3.5, 3.7],
+                    backgroundColor: "#198754"
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    // Department Performance
+    const deptCtx = document.getElementById("departmentChart");
+    if(deptCtx){
+        new Chart(deptCtx, {
+            type: "bar",
+            data: {
+                labels: ["CS", "SE", "IT", "AI", "BBA"],
+                datasets: [{
+                    label: "Attendance",
+                    data: [92, 90, 88, 95, 86],
+                    backgroundColor: "#0dcaf0"
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    // At Risk Students
+    const riskCtx = document.getElementById("riskChart");
+    if(riskCtx){
+        new Chart(riskCtx,{
+            type:"pie",
+            data:{
+                labels:["Safe","At Risk"],
+                datasets:[{
+                    data:[232,18],
+                    backgroundColor:["#198754","#dc3545"]
+                }]
+            },
+            options:{
+                responsive:true,
+                maintainAspectRatio:false,
+                plugins:{ legend:{ position:"bottom" } }
+            }
+        });
+    }
+});
+
+auth
+login.process
+<?php
+session_start(); // YE LAZMI HAI
+require_once '../config/db_connection.php';
+
+if($_SERVER['REQUEST_METHOD'] !== 'POST'){ 
+    header("Location: login.php"); 
+    exit(); 
+}
+
+$role = trim($_POST['role'] ?? '');
+$email = trim($_POST['email'] ?? '');
+$password = trim($_POST['password'] ?? '');
+
+// ADMIN
+// ===== ADMIN LOGIN =====
+if($role === 'Admin'){
+    $stmt = $pdo->prepare("SELECT * FROM `admin` WHERE `Admin_Email` = ?"); // table name chota admin
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
+    
+    if($user){ 
+        if($password == $user['Admin_Password']){
+            $_SESSION['admin_id'] = $user['Admin_ID'];
+            $_SESSION['admin_name'] = $user['Admin_Name'];
+            header("Location: ../admin/dashboard.php"); 
+            exit();
+        }else{
+            die("Password galat. DB: ".$user['Admin_Password']." | Tumne: ".$password);
+        }
+    }else{
+        die("Email nahi mili: ".$email);
+    }
+}
+
+// FACULTY
+if($role === 'faculty'){
+    $stmt = $pdo->prepare("SELECT * FROM Faculty WHERE Faculty_Email = ?");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
+    if($user && $password == $user['Faculty_Password']){
+        $_SESSION['faculty_id'] = $user['Faculty_ID'];
+        header("Location: ../faculty/dashboard.php"); 
+        exit();
+    }
+}
+
+// STUDENT
+if($role === 'student'){
+    $stmt = $pdo->prepare("SELECT * FROM Student WHERE Student_Email = ? AND Student_Password = ?");
+    $stmt->execute([$email, $password]);
+    $user = $stmt->fetch();
+    if($user){
+        $_SESSION['student_id'] = $user['Student_ID']; 
+        header("Location: ../student/dashboard.php"); 
+        exit();
+    }
+}
+
+$_SESSION['error'] = "Invalid Email, Password or Role";
+header("Location: login.php"); 
+exit();
+?>
+
+login
+<?php
+session_start();
+require_once '../config/db_connection.php';
+$error = $_SESSION['error'] ?? '';
+unset($_SESSION['error']);
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Smart Campus Login</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+body { background: #f8fafc; display: flex; justify-content: center; align-items: center; height: 100vh; }
+.login-box { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 400px; }
+</style>
+</head>
+<body>
+<div class="login-box">
+    <h2 class="text-center mb-4">Smart Campus Login</h2>
+    
+    <?php if($error): ?>
+        <div class="alert alert-danger"><?php echo $error; ?></div>
+    <?php endif; ?>
+
+    <form action="login_process.php" method="POST">
+        <div class="mb-3">
+            <label class="form-label">Login As</label>
+            <select name="role" class="form-select" required>
+                <option value="">Select Role</option>
+                <option value="Admin">Admin</option>
+                <option value="faculty">Faculty</option>
+                <option value="student">Student</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" required>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" name="password" class="form-control" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Login</button>
+    </form>
+</div>
+</body>
+</html>
+
+logout
+
+<?php
+session_start();
+session_destroy();
+header("Location: ../auth/login.php");
+exit();
+?>
+
+config 
+db connection
+<?php
+$host    = 'localhost';
+$dbname  = 'smart_campus_db';
+$user    = 'root';
+$pass    = '';
+$charset = 'utf8mb4';
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=$charset", $user, $pass, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+} catch(PDOException $e) {
+    die("Database Error: " . $e->getMessage());
+}
+// session_start yahan se hata di
+?>
+
+faculty
+
+attendence
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin();
+
+$faculty_id = $_SESSION['faculty_id'];
+
+// Submit attendance
+if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['attendance'])){
+    $course_id   = $_POST['Course_ID'];
+    $semester_id = $_POST['Semester_ID'];
+    $date        = $_POST['Attendance_Date'];
+
+    $inserted = 0;
+    foreach($_POST['attendance'] as $student_id => $status){
+        // Check duplicate
+        $check = $pdo->prepare(
+            "SELECT COUNT(*) as c FROM Attendance
+             WHERE Student_ID=? AND Course_ID=? AND Semester_ID=? AND Attendance_Date=?"
+        );
+        $check->execute([$student_id, $course_id, $semester_id, $date]);
+
+        if($check->fetch()['c'] == 0){
+            $pdo->prepare(
+                "INSERT INTO Attendance
+                 (Student_ID, Course_ID, Semester_ID, Attendance_Date, Attendance_Status, Faculty_ID)
+                 VALUES (?,?,?,?,?,?)"
+            )->execute([$student_id, $course_id, $semester_id, $date, $status, $faculty_id]);
+            $inserted++;
+        }
+    }
+    header("Location: attendance.php?success=1&inserted=$inserted");
+    exit();
+}
+
+// Get faculty courses — ALL courses assigned to this faculty
+$courses = $pdo->prepare("SELECT * FROM Course WHERE Faculty_ID=?");
+$courses->execute([$faculty_id]);
+$courses = $courses->fetchAll();
+
+// Get ALL semesters
+$semesters = $pdo->query("SELECT * FROM Semester ORDER BY Semester_ID")->fetchAll();
+
+// Get students based on selected course+semester
+$students   = [];
+$sel_course = $_GET['course_id']   ?? null;
+$sel_sem    = $_GET['semester_id'] ?? null;
+$course_name = '';
+
+if($sel_course && $sel_sem){
+    $stmt = $pdo->prepare(
+        "SELECT s.* FROM Student s
+         JOIN Enrollment e ON s.Student_ID = e.Student_ID
+         WHERE e.Course_ID=? AND e.Semester_ID=?
+         ORDER BY s.Roll_No"
+    );
+    $stmt->execute([$sel_course, $sel_sem]);
+    $students = $stmt->fetchAll();
+
+    $cn = $pdo->prepare("SELECT Course_Name FROM Course WHERE Course_ID=?");
+    $cn->execute([$sel_course]);
+    $cn = $cn->fetch();
+    $course_name = $cn ? $cn['Course_Name'] : '';
+}
+
+// Present/Absent count from today
+$present_count = 0;
+$absent_count  = 0;
+if($sel_course && $sel_sem){
+    $cnt = $pdo->prepare(
+        "SELECT
+            SUM(CASE WHEN Attendance_Status='Present' THEN 1 ELSE 0 END) as p,
+            SUM(CASE WHEN Attendance_Status='Absent'  THEN 1 ELSE 0 END) as a
+         FROM Attendance
+         WHERE Course_ID=? AND Semester_ID=? AND Faculty_ID=? AND Attendance_Date=?"
+    );
+    $cnt->execute([$sel_course, $sel_sem, $faculty_id, date('Y-m-d')]);
+    $cnt = $cnt->fetch();
+    $present_count = $cnt['p'] ?? 0;
+    $absent_count  = $cnt['a'] ?? 0;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mark Attendance</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="attendance.php" class="active"><i class="bi bi-calendar-check"></i> Mark Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Enter Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a></li>
+            <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+            <li><a href="profile.php"><i class="bi bi-person-circle"></i> Profile</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Attendance Management</h1>
+
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">
+            ✅ Attendance marked! <?php echo $_GET['inserted']; ?> records saved.
+        </div>
+        <?php endif; ?>
+
+        <!-- Cards -->
+        <div class="cards">
+            <div class="card-box">
+                <h4>Present</h4>
+                <p id="presentCount"><?php echo $present_count; ?></p>
+            </div>
+            <div class="card-box">
+                <h4>Absent</h4>
+                <p id="absentCount"><?php echo $absent_count; ?></p>
+            </div>
+        </div>
+
+        <!-- Course & Semester Filter -->
+        <form method="GET" style="margin:20px 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+            <select name="course_id" required style="padding:8px; border-radius:5px; border:1px solid #ddd; min-width:200px">
+                <option value="">-- Select Course --</option>
+                <?php foreach($courses as $c): ?>
+                <option value="<?php echo $c['Course_ID']; ?>"
+                    <?php echo $sel_course == $c['Course_ID'] ? 'selected' : ''; ?>>
+                    <?php echo $c['Course_Name']; ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+
+            <select name="semester_id" required style="padding:8px; border-radius:5px; border:1px solid #ddd; min-width:150px">
+                <option value="">-- Select Semester --</option>
+                <?php foreach($semesters as $s): ?>
+                <option value="<?php echo $s['Semester_ID']; ?>"
+                    <?php echo $sel_sem == $s['Semester_ID'] ? 'selected' : ''; ?>>
+                    <?php echo $s['Semester_Name']; ?> <?php echo $s['Semester_Year']; ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+
+            <button type="submit" class="save-btn">Load Students</button>
+        </form>
+
+        <!-- Students not found message -->
+        <?php if($sel_course && $sel_sem && empty($students)): ?>
+        <div class="alert alert-warning">
+            ⚠ No students enrolled in this course for selected semester.
+            <br>Check Enrollment table in database.
+        </div>
+        <?php endif; ?>
+
+        <!-- Mark Attendance -->
+        <?php if(!empty($students)): ?>
+        <div class="table-section">
+            <h2>Mark Attendance — <?php echo $course_name; ?></h2>
+            <form method="POST">
+                <input type="hidden" name="Course_ID"   value="<?php echo $sel_course; ?>">
+                <input type="hidden" name="Semester_ID" value="<?php echo $sel_sem; ?>">
+
+                <div style="margin-bottom:15px; display:flex; gap:10px; align-items:center">
+                    <label><strong>Date:</strong></label>
+                    <input type="date" name="Attendance_Date"
+                           id="attendanceDate"
+                           value="<?php echo date('Y-m-d'); ?>"
+                           required
+                           style="padding:8px; border-radius:5px; border:1px solid #ddd">
+                    <button type="submit" class="save-btn" onclick="updateCounts()">
+                        Save Attendance
+                    </button>
+                </div>
+
+                <table id="attendanceTable">
+                    <tr>
+                        <th>Student ID</th>
+                        <th>Student Name</th>
+                        <th>Course</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                    </tr>
+                    <?php foreach($students as $s): ?>
+                    <tr>
+                        <td>S00<?php echo $s['Student_ID']; ?></td>
+                        <td><?php echo $s['Student_Name']; ?></td>
+                        <td><?php echo $course_name; ?></td>
+                        <td><?php echo date('Y-m-d'); ?></td>
+                        <td>
+                            <label style="margin-right:10px">
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Present"
+                                       checked
+                                       onchange="updateCounts()">
+                                Present
+                            </label>
+                            <label style="margin-right:10px">
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Absent"
+                                       onchange="updateCounts()">
+                                Absent
+                            </label>
+                            <label>
+                                <input type="radio"
+                                       name="attendance[<?php echo $s['Student_ID']; ?>]"
+                                       value="Leave"
+                                       onchange="updateCounts()">
+                                Leave
+                            </label>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </table>
+
+                <br>
+                <button type="submit" class="save-btn" onclick="updateCounts()">
+                    Submit Attendance
+                </button>
+            </form>
+        </div>
+        <?php endif; ?>
+
+        <!-- Attendance History -->
+        <?php if($sel_course && $sel_sem): ?>
+        <div class="table-section">
+            <h2>Attendance History</h2>
+            <?php
+            $history = $pdo->prepare(
+                "SELECT a.*, s.Student_Name, s.Roll_No
+                 FROM Attendance a
+                 JOIN Student s ON a.Student_ID = s.Student_ID
+                 WHERE a.Course_ID=? AND a.Semester_ID=?
+                 ORDER BY a.Attendance_Date DESC, s.Roll_No"
+            );
+            $history->execute([$sel_course, $sel_sem]);
+            $history = $history->fetchAll();
+            ?>
+            <table>
+                <tr>
+                    <th>Roll No</th>
+                    <th>Student</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                </tr>
+                <?php foreach($history as $h): ?>
+                <tr>
+                    <td><?php echo $h['Roll_No']; ?></td>
+                    <td><?php echo $h['Student_Name']; ?></td>
+                    <td><?php echo $h['Attendance_Date']; ?></td>
+                    <td>
+                        <?php
+                        $color = $h['Attendance_Status'] === 'Present' ? '#15803d' :
+                                ($h['Attendance_Status'] === 'Absent'  ? '#dc2626' : '#f59e0b');
+                        ?>
+                        <span style="color:<?php echo $color; ?>; font-weight:bold">
+                            <?php echo $h['Attendance_Status']; ?>
+                        </span>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                <?php if(empty($history)): ?>
+                <tr><td colspan="4" style="text-align:center">No attendance records yet</td></tr>
+                <?php endif; ?>
+            </table>
+        </div>
+        <?php endif; ?>
+
+    </div>
+</div>
+<script>
+function updateCounts(){
+    let present = 0, absent = 0;
+    document.querySelectorAll("input[type='radio']:checked").forEach(r => {
+        if(r.value === 'Present') present++;
+        else if(r.value === 'Absent') absent++;
+    });
+    document.getElementById('presentCount').innerHTML = present;
+    document.getElementById('absentCount').innerHTML  = absent;
+}
+// Run on page load
+updateCounts();
+</script>
+</body>
+</html>
+
+dashboard
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin(); 
+$faculty_id   = $_SESSION['faculty_id'];
+$faculty_name = $_SESSION['faculty_name']?? 'Faculty';
+$courses = $pdo->prepare("SELECT * FROM Course WHERE Faculty_ID=?");
+$courses->execute([$faculty_id]);
+$courses = $courses->fetchAll(); 
+$total_students = $pdo->query("SELECT COUNT(*) as c FROM Student")->fetch()['c'];
+
+$att_submitted = $pdo->prepare(
+    "SELECT COUNT(DISTINCT Attendance_Date) as c FROM Attendance WHERE Faculty_ID=?"
+);
+$att_submitted->execute([$faculty_id]);
+$att_submitted = $att_submitted->fetch()['c'];
+ 
+$notif_count = $pdo->prepare(
+    "SELECT COUNT(*) as c FROM Notifications WHERE Faculty_ID=?"
+);
+$notif_count->execute([$faculty_id]);
+$notif_count = $notif_count->fetch()['c'];
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teacher Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php" class="active"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="attendance.php"><i class="bi bi-calendar-check"></i> Mark Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Enter Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-file-earmark-bar-graph"></i> Reports</a></li>
+            <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+            <li><a href="profile.php"><i class="bi bi-person-circle"></i> Profile</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Teacher Dashboard</h1>
+        <p class="welcome-text">
+            Welcome, <strong><?php echo $faculty_name; ?></strong><br>
+            Smart Campus Attendance & Performance Analytics System
+        </p>
+ 
+        <!-- Cards -->
+        <div class="cards">
+            <div class="card-box">
+                <h3>Assigned Courses</h3>
+                <p><?php echo count($courses); ?></p>
+            </div>
+            <div class="card-box">
+                <h3>Total Students</h3>
+                <p><?php echo $total_students; ?></p>
+            </div>
+            <div class="card-box">
+                <h3>Attendance Submitted</h3>
+                <p><?php echo $att_submitted; ?></p>
+            </div>
+            <div class="card-box">
+                <h3>Notifications</h3>
+                <p><?php echo $notif_count; ?> New</p>
+            </div>
+        </div>
+ 
+        <!-- Assigned Courses -->
+        <div class="table-section">
+            <h2>Assigned Courses</h2>
+            <table>
+                <tr>
+                    <th>Course ID</th>
+                    <th>Course Name</th>
+                    <th>Credit Hours</th>
+                </tr>
+                <?php foreach($courses as $c): ?>
+                <tr>
+                    <td>CS<?php echo $c['Course_ID']; ?></td>
+                    <td><?php echo $c['Course_Name']; ?></td>
+                    <td><?php echo $c['Credit_Hours']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+ 
+        <!-- Quick Actions -->
+        <div class="table-section">
+            <h2>Quick Actions</h2>
+            <table>
+                <tr><th>Module</th><th>Action</th></tr>
+                <tr>
+                    <td>Attendance</td>
+                    <td><a href="attendance.php" class="btn btn-primary">Mark Attendance</a></td>
+                </tr>
+                <tr>
+                    <td>Grades</td>
+                    <td><a href="grades.php" class="btn btn-success">Enter Grades</a></td>
+                </tr>
+                <tr>
+                    <td>Reports</td>
+                    <td><a href="reports.php" class="btn btn-info">View Reports</a></td>
+                </tr>
+                <tr>
+                    <td>Notifications</td>
+                    <td><a href="notifications.php" class="btn btn-warning">View Notifications</a></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+  gaedes
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin();
+$faculty_id = $_SESSION['faculty_id'];
+
+$error = $success = "";
+
+// 1. SAVE / UPDATE / ADD
+if($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['save_grade'])){
+    try{
+        $pdo->beginTransaction();
+        $sid = $_POST['Student_ID'];
+        $cid = $_POST['Course_ID'];
+        $sem = $_POST['Semester_ID'];
+        $quiz = $_POST['Quiz_Marks'];
+        $assign = $_POST['Assignment_Marks'];
+        $mid = $_POST['Mid_Marks'];
+        $final = $_POST['Final_Marks'];
+
+        $enr = $pdo->prepare("SELECT COUNT(*) FROM Enrollment WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?");
+        $enr->execute([$sid,$cid,$sem]);
+        if($enr->fetchColumn() == 0){ throw new Exception("Student not enrolled in this course/semester"); }
+        $enr = null; // closeCursor ki jagah null kar diya
+
+        $check = $pdo->prepare("SELECT COUNT(*) FROM Grades WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?");
+        $check->execute([$sid,$cid,$sem]);
+        $exists = $check->fetchColumn();
+        $check = null;
+
+        if($exists > 0){
+            $stmt = $pdo->prepare("UPDATE Grades SET Quiz_Marks=?,Assignment_Marks=?,Mid_Marks=?,Final_Marks=? WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?");
+            $stmt->execute([$quiz,$assign,$mid,$final,$sid,$cid,$sem]);
+            $stmt = null;
+            $success = "Grades Updated!";
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO Grades (Student_ID,Course_ID,Semester_ID,Quiz_Marks,Assignment_Marks,Mid_Marks,Final_Marks) VALUES (?,?,?,?,?,?,?)");
+            $stmt->execute([$sid,$cid,$sem,$quiz,$assign,$mid,$final]);
+            $stmt = null;
+            $success = "Grades Added!";
+        }
+
+        // PROCEDURE ko SAFE tareeqe se chalao - YE CHANGE KIYA HAI
+       // $pdo->exec("CALL CalculateGPA($sid,$cid,$sem)");
+       // $pdo->query("SELECT 1"); // Force buffer clear
+
+        $stmt = $pdo->prepare("INSERT INTO Notifications (Type,Notification_Date,Message,Admin_ID,Student_ID,Faculty_ID) VALUES ('Student',CURDATE(),'Your grades have been updated.',1,?,?)");
+        $stmt->execute([$sid,$faculty_id]);
+        $stmt = null;
+        
+        $pdo->commit();
+        header("Location: grades.php?success=$success"); exit();
+
+    }catch(Exception $e){
+        $pdo->rollBack();
+        $error = $e->getMessage();
+    }
+}
+
+// 2. DELETE
+if(isset($_GET['delete'])){
+    $stmt = $pdo->prepare("DELETE FROM Grades WHERE Student_ID=? AND Course_ID=? AND Semester_ID=?");
+    $stmt->execute([$_GET['sid'],$_GET['cid'],$_GET['sem']]);
+    $stmt = null;
+    header("Location: grades.php?success=Deleted"); exit();
+}
+
+// 3. GET DATA
+$pdo->query("SELECT 1"); // <-- YE ADD KARO LINE 68 PE
+
+$courses_stmt = $pdo->prepare("SELECT * FROM Course WHERE Faculty_ID=?");
+$courses_stmt->execute([$faculty_id]);
+$courses = $courses_stmt->fetchAll();
+$courses_stmt = null; // closeCursor ki jagah null
+$sem_stmt = $pdo->query("SELECT * FROM Semester ORDER BY Semester_ID DESC");
+$semesters = $sem_stmt->fetchAll(PDO::FETCH_ASSOC);
+$sem_stmt = null;
+
+$stu_stmt = $pdo->query("SELECT Student_ID, Student_Name, Roll_No FROM Student");
+$students = $stu_stmt->fetchAll(PDO::FETCH_ASSOC);
+$stu_stmt = null;
+
+// 4. VIEW DATA - Direct Query, View nahi
+$grade_stmt = $pdo->query("
+    SELECT 
+        s.Student_ID as `Student ID`, 
+        s.Student_Name as `Student Name`,
+        c.Course_ID as `Course ID`,
+        c.Course_Name as `Course`,
+        sem.Semester_ID as `Semester ID`,
+        g.Quiz_Marks as `Quiz`,
+        g.Assignment_Marks as `Assignment`,
+        g.Mid_Marks as `Mid`,
+        g.Final_Marks as `Final`,
+        (g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) as `Total Marks`,
+        ROUND(((g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) / 100 * 100),2) as `Percentage %`,
+        CASE 
+            WHEN (g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) >= 90 THEN 'A'
+            WHEN (g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) >= 80 THEN 'B'
+            WHEN (g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) >= 70 THEN 'C'
+            WHEN (g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) >= 60 THEN 'D'
+            ELSE 'F'
+        END as `Grade`,
+        ROUND(((g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) / 100 * 4),2) as `GPA`
+    FROM Grades g
+    JOIN Student s ON g.Student_ID = s.Student_ID
+    JOIN Course c ON g.Course_ID = c.Course_ID
+    JOIN Semester sem ON g.Semester_ID = sem.Semester_ID
+");
+$grades = $grade_stmt->fetchAll(PDO::FETCH_ASSOC);
+$grade_stmt = null;
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Grade Management</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>.wrapper{display:flex}.sidebar{width:250px;background:#2c3e50;color:white;min-height:100vh;padding:20px}.sidebar h2{color:white;text-align:center}.sidebar ul{list-style:none;padding:0}.sidebar ul li{margin:15px 0}.sidebar ul li a{color:white;text-decoration:none;display:block;padding:10px;border-radius:5px}.sidebar ul li a:hover{background:#34495e}.main-content{flex:1;padding:30px}</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="attendance.php">Mark Attendance</a></li>
+            <li><a href="grades.php">Enter Grades</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Grade Management</h1>
+        <?php if($success):?><div class="alert alert-success"><?php echo $success;?></div><?php endif;?>
+        <?php if($error):?><div class="alert alert-danger">Error: <?php echo $error;?></div><?php endif;?>
+        <?php if(isset($_GET['success'])):?><div class="alert alert-success"><?php echo $_GET['success'];?></div><?php endif;?>
+        <button class="btn btn-success mb-3" id="addBtn">+ Add Grade</button>
+        <div class="table-responsive">
+            <table class="table table-bordered">
+                <thead class="table-dark"><tr><th>Student ID</th><th>Name</th><th>Course</th><th>Quiz</th><th>Assignment</th><th>Mid</th><th>Final</th><th>Total</th><th>Percentage</th><th>Grade</th><th>GPA</th><th>Action</th></tr></thead>
+                <tbody>
+                    <?php foreach($grades as $g): ?>
+                    <tr>
+                        <td>S00<?php echo $g['Student ID']; ?></td>
+                        <td><?php echo $g['Student Name']; ?></td>
+                        <td><?php echo $g['Course']; ?></td>
+                        <td><?php echo $g['Quiz']; ?></td>
+                        <td><?php echo $g['Assignment']; ?></td>
+                        <td><?php echo $g['Mid']; ?></td>
+                        <td><?php echo $g['Final']; ?></td>
+                        <td><b><?php echo $g['Total Marks']; ?></b></td>
+                        <td><?php echo $g['Percentage %']; ?>%</td>
+                        <td><b><?php echo $g['Grade']; ?></b></td>
+                        <td><b><?php echo $g['GPA']; ?></b></td>
+                        <td>
+                            <button class="btn btn-sm btn-info text-white viewBtn" data-sid="S00<?php echo $g['Student ID'];?>" data-name="<?php echo $g['Student Name'];?>" data-course="<?php echo $g['Course'];?>" data-quiz="<?php echo $g['Quiz'];?>" data-assign="<?php echo $g['Assignment'];?>" data-mid="<?php echo $g['Mid'];?>" data-final="<?php echo $g['Final'];?>" data-total="<?php echo $g['Total Marks'];?>" data-grade="<?php echo $g['Grade'];?>" data-gpa="<?php echo $g['GPA'];?>">View</button>
+                            <button class="btn btn-sm btn-warning editBtn" data-sid="<?php echo $g['Student ID'];?>" data-cid="<?php echo $g['Course ID'];?>" data-sem="<?php echo $g['Semester ID'];?>" data-quiz="<?php echo $g['Quiz'];?>" data-assign="<?php echo $g['Assignment'];?>" data-mid="<?php echo $g['Mid'];?>" data-final="<?php echo $g['Final'];?>">Edit</button>
+                            <a href="grades.php?delete=1&sid=<?php echo $g['Student ID'];?>&cid=<?php echo $g['Course ID'];?>&sem=<?php echo $g['Semester ID'];?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete?')">Delete</a>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="gradeModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center">
+    <div style="background:white;padding:30px;border-radius:10px;width:450px">
+        <h3 id="modalTitle">Add/Edit Grades</h3>
+        <form method="POST">
+            <input type="hidden" name="save_grade" value="1">
+            <label>Student</label><select name="Student_ID" id="m_sid" class="form-select mb-2" required><option value="">-- Select Student --</option><?php foreach($students as $s):?><option value="<?php echo $s['Student_ID'];?>"><?php echo $s['Roll_No']." - ".$s['Student_Name'];?></option><?php endforeach;?></select>
+            <label>Course</label><select name="Course_ID" id="m_cid" class="form-select mb-2" required><option value="">-- Select Course --</option><?php foreach($courses as $c):?><option value="<?php echo $c['Course_ID'];?>"><?php echo $c['Course_Name'];?></option><?php endforeach;?></select>
+            <label>Semester</label><select name="Semester_ID" id="m_semid" class="form-select mb-2" required><option value="">-- Select Semester --</option><?php foreach($semesters as $s):?><option value="<?php echo $s['Semester_ID'];?>"><?php echo $s['Semester_Name'];?></option><?php endforeach;?></select>
+            <label>Quiz (max 20)</label><input type="number" name="Quiz_Marks" id="m_quiz" min="0" max="20" class="form-control mb-2" required>
+            <label>Assignment (max 10)</label><input type="number" name="Assignment_Marks" id="m_assign" min="0" max="10" class="form-control mb-2" required>
+            <label>Mid (max 30)</label><input type="number" name="Mid_Marks" id="m_mid" min="0" max="30" class="form-control mb-2" required>
+            <label>Final (max 40)</label><input type="number" name="Final_Marks" id="m_final" min="0" max="40" class="form-control mb-2" required>
+            <button type="submit" class="btn btn-success">Save</button>
+            <button type="button" id="closeBtn" class="btn btn-secondary">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('addBtn').onclick = function(){ document.getElementById('modalTitle').innerText = 'Add Grades'; document.getElementById('m_sid').value='';document.getElementById('m_cid').value='';document.getElementById('m_semid').value='';document.getElementById('m_quiz').value='';document.getElementById('m_assign').value='';document.getElementById('m_mid').value='';document.getElementById('m_final').value='';document.getElementById('gradeModal').style.display='flex';}
+document.getElementById('closeBtn').onclick = function(){ document.getElementById('gradeModal').style.display='none';}
+document.querySelectorAll('.editBtn').forEach(btn => {btn.onclick = function(){document.getElementById('modalTitle').innerText = 'Edit Grades';document.getElementById('m_sid').value=this.dataset.sid;document.getElementById('m_cid').value=this.dataset.cid;document.getElementById('m_semid').value=this.dataset.sem;document.getElementById('m_quiz').value=this.dataset.quiz;document.getElementById('m_assign').value=this.dataset.assign;document.getElementById('m_mid').value=this.dataset.mid;document.getElementById('m_final').value=this.dataset.final;document.getElementById('gradeModal').style.display='flex';}})
+document.querySelectorAll('.viewBtn').forEach(btn => {btn.onclick = function(){alert("Student ID: " + this.dataset.sid + "\nName: " + this.dataset.name + "\nCourse: " + this.dataset.course + "\nQuiz: " + this.dataset.quiz + "\nAssignment: " + this.dataset.assign + "\nMid: " + this.dataset.mid + "\nFinal: " + this.dataset.final + "\nTotal: " + this.dataset.total + "\nGrade: " + this.dataset.grade + "\nGPA: " + this.dataset.gpa);}})
+</script>
+</body>
+</html>
+
+notifications
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin();
+$faculty_id = $_SESSION['faculty_id'];
+
+// Faculty ki notifications fetch karo: jisme Faculty_ID match ho ya Type = ALL ho
+$stmt = $pdo->prepare("
+    SELECT * FROM notifications 
+    WHERE Faculty_ID = ? OR Type = 'ALL' 
+    ORDER BY Notification_Date DESC
+");
+$stmt->execute([$faculty_id]);
+$notifications = $stmt->fetchAll();
+$stmt = null;
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Faculty Notifications</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+.wrapper{display:flex}
+.sidebar{width:250px;background:#2c3e50;color:white;min-height:100vh;padding:20px}
+.sidebar h2{color:white;text-align:center}
+.sidebar ul{list-style:none;padding:0}
+.sidebar ul li{margin:15px 0}
+.sidebar ul li a{color:white;text-decoration:none;display:block;padding:10px;border-radius:5px}
+.sidebar ul li a:hover{background:#34495e}
+.main-content{flex:1;padding:30px}
+.badge-faculty{background:#0d6efd}
+.badge-all{background:#dc3545}
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="attendance.php">Mark Attendance</a></li>
+            <li><a href="grades.php">Enter Grades</a></li>
+            <li><a href="reports.php">Student Reports</a></li>
+            <li><a href="notifications.php">Notifications</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Notifications</h1>
+        <?php if(count($notifications) == 0): ?>
+            <div class="alert alert-info">No new notifications.</div>
+        <?php endif; ?>
+        
+        <?php foreach($notifications as $n): ?>
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <span class="badge <?php echo $n['Type'] == 'ALL' ? 'badge-all' : 'badge-faculty'; ?>">
+                        <?php echo $n['Type']; ?>
+                    </span>
+                    <small class="text-muted"><?php echo date("d-M-Y", strtotime($n['Notification_Date'])); ?></small>
+                </div>
+                <p class="mt-2 mb-0"><?php echo $n['Message']; ?></p>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+</body>
+</html>
+
+
+profile
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin();
+ 
+$faculty_id = $_SESSION['faculty_id'];
+ 
+// Update profile
+if($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if(!empty($_POST['password'])) {
+        $pdo->prepare(
+            "UPDATE Faculty SET Faculty_Name=?, Faculty_Email=?,
+             Faculty_Phone=?, Faculty_Password=? WHERE Faculty_ID=?"
+        )->execute([
+            $_POST['name'], $_POST['email'],
+            $_POST['phone'], $_POST['password'], $faculty_id
+        ]);
+    } else {
+        $pdo->prepare(
+            "UPDATE Faculty SET Faculty_Name=?, Faculty_Email=?,
+             Faculty_Phone=? WHERE Faculty_ID=?"
+        )->execute([
+            $_POST['name'], $_POST['email'],
+            $_POST['phone'], $faculty_id
+        ]);
+    }
+    $_SESSION['faculty_name'] = $_POST['name'];
+    header("Location: profile.php?success=1");
+    exit();
+}
+ 
+// Fetch faculty data
+$faculty = $pdo->prepare(
+    "SELECT f.*, d.Department_Name FROM Faculty f
+     JOIN Department d ON f.Department_ID = d.Department_ID
+     WHERE f.Faculty_ID=?"
+);
+$faculty->execute([$faculty_id]);
+$faculty = $faculty->fetch();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Profile</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="attendance.php">Mark Attendance</a></li>
+            <li><a href="grades.php">Enter Grades</a></li>
+            <li><a href="profile.php">Profile</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>My Profile</h1>
+        <?php if(isset($_GET['success'])): ?>
+        <div class="alert alert-success">✅ Profile updated successfully!</div>
+        <?php endif; ?>
+        <div class="table-section">
+            <form method="POST">
+                <input type="text" name="name"
+                       placeholder="Full Name"
+                       value="<?php echo htmlspecialchars($faculty['Faculty_Name']); ?>"
+                       class="form-control mb-2" required>
+                <input type="email" name="email"
+                       placeholder="Email"
+                       value="<?php echo htmlspecialchars($faculty['Faculty_Email']); ?>"
+                       class="form-control mb-2" required>
+                <input type="text" name="phone"
+                       placeholder="Phone"
+                       value="<?php echo htmlspecialchars($faculty['Faculty_Phone']); ?>"
+                       class="form-control mb-2">
+                <input type="text"
+                       placeholder="Department"
+                       value="<?php echo $faculty['Department_Name']; ?>"
+                       class="form-control mb-2" readonly>
+                <input type="text"
+                       placeholder="Designation"
+                       value="<?php echo $faculty['Designation']; ?>"
+                       class="form-control mb-2" readonly>
+                <input type="password" name="password"
+                       placeholder="New Password (leave empty to keep current)"
+                       class="form-control mb-2">
+                <button type="submit" class="save-btn">
+                    Update Profile
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+ 
+reports'
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkFacultyLogin();
+$faculty_id = $_SESSION['faculty_id'];
+
+$stmt = $pdo->prepare("
+    SELECT 
+        s.Student_ID,
+        s.Student_Name,
+        s.Roll_No,
+        c.Course_Name,
+        ROUND(((g.Quiz_Marks + g.Assignment_Marks + g.Mid_Marks + g.Final_Marks) / 100 * 4),2) as GPA,
+        (SELECT COUNT(*) FROM attendance a WHERE a.Student_ID = s.Student_ID AND a.Course_ID = c.Course_ID AND a.Attendance_Status = 'Present') as Present,
+        (SELECT COUNT(*) FROM attendance a WHERE a.Student_ID = s.Student_ID AND a.Course_ID = c.Course_ID) as Total
+    FROM Grades g
+    JOIN Student s ON g.Student_ID = s.Student_ID
+    JOIN Course c ON g.Course_ID = c.Course_ID
+    WHERE c.Faculty_ID = ?
+    GROUP BY s.Student_ID, c.Course_ID
+    ORDER BY s.Student_Name
+");
+$stmt->execute([$faculty_id]);
+$reports = $stmt->fetchAll();
+$stmt = null;
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Student Reports</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>.wrapper{display:flex}.sidebar{width:250px;background:#2c3e50;color:white;min-height:100vh;padding:20px}.sidebar h2{color:white;text-align:center}.sidebar ul{list-style:none;padding:0}.sidebar ul li{margin:15px 0}.sidebar ul li a{color:white;text-decoration:none;display:block;padding:10px;border-radius:5px}.sidebar ul li a:hover{background:#34495e}.main-content{flex:1;padding:30px}</style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="sidebar">
+        <h2>Smart Campus</h2>
+        <ul>
+            <li><a href="dashboard.php">Dashboard</a></li>
+            <li><a href="attendance.php">Mark Attendance</a></li>
+            <li><a href="grades.php">Enter Grades</a></li>
+            <li><a href="reports.php">Student Reports</a></li>
+            <li><a href="../auth/logout.php">Logout</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h1>Student Performance Report</h1>
+        <?php if(count($reports) == 0): ?>
+            <div class="alert alert-warning">No Data Found. Pehle Grades add karein.</div>
+        <?php endif; ?>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped">
+                <thead class="table-dark">
+                    <tr><th>Roll No</th><th>Student Name</th><th>Course</th><th>GPA</th><th>Attendance %</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach($reports as $r): 
+                        $percent = $r['Total'] > 0 ? round(($r['Present']/$r['Total'])*100,2) : 0;
+                    ?>
+                    <tr>
+                        <td><?php echo $r['Roll_No']; ?></td>
+                        <td><?php echo $r['Student_Name']; ?></td>
+                        <td><?php echo $r['Course_Name']; ?></td>
+                        <td><b><?php echo $r['GPA']; ?></b></td>
+                        <td><?php echo $r['Present'].'/'.$r['Total'].' - '.$percent.'%'; ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+include 
+session
+
+<?php
+if(session_status()===PHP_SESSION_NONE){ 
+    session_start(); 
+}
+
+define('APP_URL', '/smart_campus_db'); // apne folder ka naam
+
+function checkAdminLogin(){ 
+    if(!isset($_SESSION['admin_id'])){ 
+        header("Location: ".APP_URL."/auth/login.php"); 
+        exit(); 
+    } 
+}
+
+function checkFacultyLogin(){ 
+    if(!isset($_SESSION['faculty_id'])){ 
+        header("Location: ".APP_URL."/auth/login.php"); 
+        exit(); 
+    } 
+}
+
+function checkStudentLogin(){ 
+    if(!isset($_SESSION['student_id'])){ 
+        header("Location: ".APP_URL."/auth/login.php"); 
+        exit(); 
+    } 
+}
+?>
+
+student
+dasdhoard
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+
+$student_id = $_SESSION['student_id']; // agar ye set hai to theek hai warna user_id karo
+
+$student=$pdo->prepare("SELECT s.*,d.Department_Name FROM Student s JOIN Department d ON s.Department_ID=d.Department_ID WHERE s.Student_ID=?");
+$student->execute([$student_id]);
+$student=$student->fetch();
+
+$grades=$pdo->prepare("SELECT * FROM Student_Performance_View WHERE `Student ID`=?");
+$grades->execute([$student_id]);
+$grades=$grades->fetchAll();
+
+$attendance=$pdo->prepare("SELECT * FROM Attendance_Summary_View WHERE `Student ID`=?");
+$attendance->execute([$student_id]);
+$attendance=$attendance->fetchAll();
+
+$notifs=$pdo->prepare("SELECT * FROM Notifications WHERE Student_ID=? ORDER BY Notification_Date DESC LIMIT 5");
+$notifs->execute([$student_id]);
+$notifs=$notifs->fetchAll();
+
+$avg_att=count($attendance)>0?round(array_sum(array_column($attendance,'Attendance %'))/count($attendance),0):0;
+$avg_gpa=count($grades)>0?round(array_sum(array_column($grades,'GPA'))/count($grades),2):0;
+$cgpa=count($grades)>0?$grades[0]['CGPA']:0;
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Student Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.sidebar { background: #1e3a8a; color: white; width: 260px; height: 100vh; position: fixed; }
+.sidebar-profile { text-align: center; padding: 25px 20px; border-bottom: 1px solid #334155; }
+.sidebar-profile i { font-size: 60px; color: #93c5fd; }
+.sidebar-profile h4 { margin: 10px 0 5px; }
+.sidebar-profile p { font-size: 13px; color: #93c5fd; margin: 0; }
+.sidebar ul { list-style: none; padding: 15px 0; margin: 0; }
+.sidebar ul li a { color: white; padding: 12px 20px; display: block; text-decoration: none; }
+.sidebar ul li a:hover { background: #2563eb; border-left: 4px solid #93c5fd; }
+.main-content { margin-left: 260px; padding: 30px; }
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 20px 0; }
+.card-box { background: white; padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.card-box h3 { color: #64748b; font-size: 16px; }
+.card-box p { color: #2563eb; font-size: 32px; font-weight: 700; margin: 10px 0 0; }
+.table-section { background: white; padding: 25px; border-radius: 12px; margin-top: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+table { width: 100%; }
+table th { background: #2563eb; color: white; padding: 12px; }
+table td { padding: 10px; border-bottom: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <!-- SIDEBAR WITH NAME -->
+    <div class="sidebar">
+        <div class="sidebar-profile">
+            <i class="bi bi-person-circle"></i>
+            <h4><?php echo $student['Student_Name']; ?></h4>
+            <p><?php echo $student['Department_Name']; ?></p>
+        </div>
+        <ul>
+            <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+            <li><a href="attendance.php"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+            <li><a href="grades.php"><i class="bi bi-journal-check"></i> Grades</a></li>
+            <li><a href="reports.php"><i class="bi bi-bar-chart"></i> Reports</a></li>
+            <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+            <li><a href="profile.php"><i class="bi bi-person"></i> Profile</a></li>
+            <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+        </ul>
+    </div>
+
+    <div class="main-content">
+        <h1>Student Dashboard</h1>
+        <p class="welcome-text">Welcome, <strong><?php echo $student['Student_Name']; ?></strong><br>Smart Campus Attendance & Performance Analytics System</p>
+        
+        <div class="cards">
+            <div class="card-box"><h3>Attendance</h3><p><?php echo $avg_att; ?>%</p></div>
+            <div class="card-box"><h3>Current GPA</h3><p><?php echo $avg_gpa; ?> / 4.00</p></div>
+            <div class="card-box"><h3>Current CGPA</h3><p><?php echo $cgpa; ?> / 4.00</p></div>
+            <div class="card-box"><h3>Notifications</h3><p><?php echo count($notifs); ?> New</p></div>
+        </div>
+
+        <div class="table-section">
+            <h2>Performance Summary</h2>
+            <table>
+                <tr><th>Course</th><th>Attendance</th><th>Grade</th></tr>
+                <?php
+                $att_map=[];
+                foreach($attendance as $a) $att_map[$a['Course']]=$a['Attendance %'];
+                foreach($grades as $g): ?>
+                <tr>
+                    <td><?php echo $g['Course']; ?></td>
+                    <td><?php echo $att_map[$g['Course']]??'N/A'; ?>%</td>
+                    <td><?php echo $g['Grade']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+
+        <div class="table-section">
+            <h2>Recent Notifications</h2>
+            <?php foreach($notifs as $n): ?>
+            <div style="padding:10px;border-bottom:1px solid #eee">
+                <span><?php echo $n['Message']; ?></span>
+                <small style="float:right;color:#999"><?php echo $n['Notification_Date']; ?></small>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+atedence
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+$student_id = $_SESSION['student_id'];
+
+$student = $pdo->prepare("SELECT Student_Name FROM Student WHERE Student_ID=?");
+$student->execute([$student_id]);
+$student_name = $student->fetch()['Student_Name'];
+
+$attendance = $pdo->prepare("SELECT * FROM Attendance_Summary_View WHERE `Student ID`=?");
+$attendance->execute([$student_id]);
+$attendance = $attendance->fetchAll();
+?>
+<!DOCTYPE html>
+<html>
+<head><title>My Attendance</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <?php include 'sidebar.php'; ?>
+    <div class="main-content">
+        <h1>My Attendance</h1>
+        <div class="table-section">
+            <table class="table table-bordered">
+                <thead style="background:#2563eb; color:white;"><tr><th>Course</th><th>Total</th><th>Present</th><th>Absent</th><th>%</th><th>Status</th></tr></thead>
+                <tbody>
+                <?php foreach($attendance as $a): ?>
+                <tr>
+                    <td><?php echo $a['Course']; ?></td>
+                    <td><?php echo $a['Total Classes']; ?></td>
+                    <td><?php echo $a['Present']; ?></td>
+                    <td><?php echo $a['Absent']; ?></td>
+                    <td><?php echo $a['Attendance %']; ?>%</td>
+                    <td style="color:<?php echo $a['Status']=='AT RISK'?'red':'green'; ?>"><?php echo $a['Status']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+grades
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+$student_id = $_SESSION['student_id'];
+
+$grades = $pdo->prepare("SELECT * FROM Student_Performance_View WHERE `Student ID`=?");
+$grades->execute([$student_id]);
+$grades = $grades->fetchAll();
+?>
+<!DOCTYPE html>
+<html>
+<head><title>My Grades</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <?php include 'sidebar.php'; ?>
+    <div class="main-content">
+        <h1>My Grades</h1>
+        <div class="table-section">
+            <table class="table table-bordered">
+                <thead style="background:#2563eb; color:white;"><tr><th>Course</th><th>Semester</th><th>Total</th><th>Grade</th><th>GPA</th></tr></thead>
+                <tbody>
+                <?php foreach($grades as $g): ?>
+                <tr>
+                    <td><?php echo $g['Course']; ?></td>
+                    <td><?php echo $g['Semester']; ?></td>
+                    <td><?php echo $g['Total']; ?></td>
+                    <td><?php echo $g['Grade']; ?></td>
+                    <td><?php echo $g['GPA']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+notifications
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+$student_id = $_SESSION['student_id'];
+
+$notifs=$pdo->prepare("SELECT * FROM Notifications WHERE Student_ID=? ORDER BY Notification_Date DESC");
+$notifs->execute([$student_id]);
+$notifs=$notifs->fetchAll();
+?>
+<!DOCTYPE html>
+<html>
+<head><title>Notifications</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <?php include 'sidebar.php'; ?>
+    <div class="main-content">
+        <h1>Notifications</h1>
+        <div class="table-section">
+            <?php foreach($notifs as $n): ?>
+            <div style="padding:15px;border-bottom:1px solid #eee">
+                <p><?php echo $n['Message']; ?></p>
+                <small style="color:#999"><?php echo $n['Notification_Date']; ?></small>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+profile
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+
+$student_id = $_SESSION['student_id'];
+
+// VARIABLE KA NAAM ALAG RAKHA: $student_data
+$sql = "SELECT * FROM Student WHERE Student_ID = $student_id";
+$student_data = $pdo->query($sql)->fetch();
+
+// DEPARTMENT
+$dept_name = "N/A";
+if(!empty($student_data['Department_ID'])){
+    $dept_sql = "SELECT Department_Name FROM Department WHERE Department_ID = ".$student_data['Department_ID'];
+    $dept_name = $pdo->query($dept_sql)->fetch()['Department_Name'];
+}
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Profile</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<div class="wrapper">
+    <?php include 'sidebar.php'; ?>
+    <div class="main-content p-4">
+        <h1 class="mb-4">My Profile</h1>
+        <div class="card p-4 shadow-sm">
+            <p><b>Name:</b> <?php echo $student_data['Student_Name']; ?></p>
+            <p><b>Roll No:</b> <?php echo $student_data['Roll_No']; ?></p>
+            <p><b>Department:</b> <?php echo $dept_name; ?></p>
+            <p><b>Semester:</b> <?php echo $student_data['Semester']; ?></p>
+            <p><b>Email:</b> <?php echo $student_data['Student_Email']; ?></p>
+            <p><b>Phone:</b> <?php echo $student_data['Student_Phone']; ?></p>
+            <p><b>Status:</b> <?php echo $student_data['Status']; ?></p>
+        </div>
+    </div>
+</div>
+</body>
+</html>
+
+reports
+
+<?php
+require_once '../config/db_connection.php';
+require_once '../includes/session_check.php';
+checkStudentLogin();
+$student_id = $_SESSION['student_id'];
+
+// 1. Student Performance from View
+$performance = $pdo->prepare("SELECT * FROM Student_Performance_View WHERE `Student ID`=? ORDER BY Semester");
+$performance->execute([$student_id]);
+$performance = $performance->fetchAll();
+
+// 2. Attendance Summary from View  
+$attendance = $pdo->prepare("SELECT * FROM Attendance_Summary_View WHERE `Student ID`=?");
+$attendance->execute([$student_id]);
+$attendance = $attendance->fetchAll();
+?>
+<!DOCTYPE html>
+<html>
+<head>
+<title>My Reports</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="../assets/css/style.css">
+<style>
+.table-section { background: white; padding: 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.table thead { background: #2563eb; color: white; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+    <?php include 'sidebar.php'; ?>
+    <div class="main-content">
+        <h1>My Reports</h1>
+
+        <!-- Academic Performance Report -->
+        <div class="table-section">
+            <h2><i class="bi bi-bar-chart"></i> Academic Performance Report</h2>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Semester</th>
+                        <th>Course</th>
+                        <th>Total Marks</th>
+                        <th>Grade</th>
+                        <th>GPA</th>
+                        <th>CGPA</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if(count($performance) > 0): ?>
+                    <?php foreach($performance as $p): ?>
+                    <tr>
+                        <td><?php echo $p['Semester']; ?></td>
+                        <td><?php echo $p['Course']; ?></td>
+                        <td><?php echo $p['Total']; ?></td>
+                        <td><span class="badge bg-primary"><?php echo $p['Grade']; ?></span></td>
+                        <td><?php echo number_format($p['GPA'], 2); ?></td>
+                        <td><?php echo number_format($p['CGPA'], 2); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr><td colspan="6" class="text-center">No performance data found</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+            <button class="btn btn-success" onclick="window.print()"><i class="bi bi-download"></i> Download PDF</button>
+        </div>
+
+        <!-- Attendance Report -->
+        <div class="table-section">
+            <h2><i class="bi bi-calendar-check"></i> Attendance Report</h2>
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>Course</th>
+                        <th>Total Classes</th>
+                        <th>Present</th>
+                        <th>Absent</th>
+                        <th>Attendance %</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if(count($attendance) > 0): ?>
+                    <?php foreach($attendance as $a): ?>
+                    <tr>
+                        <td><?php echo $a['Course']; ?></td>
+                        <td><?php echo $a['Total Classes']; ?></td>
+                        <td><?php echo $a['Present']; ?></td>
+                        <td><?php echo $a['Absent']; ?></td>
+                        <td><?php echo $a['Attendance %']; ?>%</td>
+                        <td>
+                            <?php if($a['Status'] == 'AT RISK'): ?>
+                                <span class="badge bg-danger">⚠ AT RISK</span>
+                            <?php else: ?>
+                                <span class="badge bg-success">✓ OK</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr><td colspan="6" class="text-center">No attendance data found</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+</div>
+</body>
+</html>
+
+side br
+<?php $student_id = $_SESSION['student_id'];
+$student = $pdo->prepare("SELECT s.Student_Name, d.Department_Name FROM Student s JOIN Department d ON s.Department_ID=d.Department_ID WHERE s.Student_ID=?");
+$student->execute([$student_id]); $s = $student->fetch(); ?>
+<div class="sidebar">
+    <div class="sidebar-profile">
+        <i class="bi bi-person-circle"></i>
+        <h4><?php echo $s['Student_Name']; ?></h4>
+        <p><?php echo $s['Department_Name']; ?></p>
+    </div>
+    <ul>
+        <li><a href="dashboard.php"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+        <li><a href="attendance.php"><i class="bi bi-calendar-check"></i> Attendance</a></li>
+        <li><a href="grades.php"><i class="bi bi-journal-check"></i> Grades</a></li>
+        <li><a href="reports.php"><i class="bi bi-bar-chart"></i> Reports</a></li>
+        <li><a href="notifications.php"><i class="bi bi-bell"></i> Notifications</a></li>
+        <li><a href="profile.php"><i class="bi bi-person"></i> Profile</a></li>
+        <li><a href="../auth/logout.php"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+    </ul>
+</div>
+
+env
+DB_HOST=localhost
+DB_NAME=smart_campus_db
+DB_USER=root
+DB_PASS=
+DB_CHARSET=utf8mb4
+
+APP_NAME=Smart Campus
+APP_URL=http://localhost:1234/smart_campus_db
+APP_ENV=local
+
+MIN_ATTENDANCE=75
+MAX_QUIZ=20
+MAX_MID=30
+MAX_FINAL=50
+MAX_TOTAL=100
+
+index
+<?php
+session_start();
+// Agar already logged in hai to dashboard pe jao
+if(isset($_SESSION['admin_id'])){
+    header("Location: admin/dashboard.php"); exit();
+}
+if(isset($_SESSION['faculty_id'])){
+    header("Location: faculty/dashboard.php"); exit();
+}
+if(isset($_SESSION['student_id'])){
+    header("Location: student/dashboard.php"); exit();
+}
+// Nahi hai to login pe jao
+header("Location: auth/login.php");
+exit();
+?>
+
+test
+<?php
+
+require_once 'config/db_connection.php';
+echo "<h2>✅ Database Connected!</h2>";
+$stmt = $pdo->query("SELECT COUNT(*) as total FROM Student");
+$result = $stmt->fetch();
+echo "Total Students: " . $result['total'];
+?>
